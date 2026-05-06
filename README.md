@@ -1126,9 +1126,13 @@ This is the unlock: instead of treating "memory" as a black box inside the model
 **Hostinger 1-click users:** create the vault folder _inside the container_ and _under the persistent volume mount_ — otherwise it disappears on restart. If `~` is on the volume (it usually is), this just works:
 
 ```bash
-# Inside the container
-mkdir -p ~/hermes-context/active-projects/inkscribed/vault-sync/inkscribed-vault
+# Inside the container — replace <project-slug> with your own short name
+# (e.g., your client's name, your side-project's codename, or just "main").
+PROJECT="<project-slug>"
+mkdir -p ~/hermes-context/active-projects/"$PROJECT"/vault-sync/"$PROJECT"-vault
 ```
+
+> *What this does:* makes a per-project pocket inside `hermes-context/` so the same Hermes setup can host multiple vaults (one per client / side-project / domain) without them stepping on each other. The folder name is just a label — the agent only cares about the path you put in `OBSIDIAN_VAULT_PATH` next.
 
 To open the same vault in Obsidian on your **laptop**, you have three options:
 
@@ -1140,13 +1144,16 @@ For most people, the **git approach is plenty** — see Part 7.
 
 ### 6.2 Tell Hermes where it is
 
-Add to **every** gateway's `.env` file:
+Add to **every** gateway's `.env` file (use the same `$PROJECT` slug you picked above):
 
 ```bash
+PROJECT="<project-slug>"   # same value you used in 6.1
 for env in ~/gateways/*/.env; do
-  echo "OBSIDIAN_VAULT_PATH=/root/hermes-context/active-projects/inkscribed/vault-sync/inkscribed-vault" >> "$env"
+  echo "OBSIDIAN_VAULT_PATH=/root/hermes-context/active-projects/$PROJECT/vault-sync/$PROJECT-vault" >> "$env"
 done
 ```
+
+> *What this does:* writes the absolute path of your vault into each bot's `.env` so the `obsidian_vault` skill can find it. Both gateways read the same path — that's how durable knowledge crosses bots.
 
 ### 6.3 Give Hermes a skill to use it
 
