@@ -132,7 +132,7 @@ Their docs at [hermes-agent.nousresearch.com](https://hermes-agent.nousresearch.
 
 ## Hermes Agent vs. OpenClaw — why this guide picked Hermes
 
-If you've been agent-curious for more than a weekend, you've heard of **[OpenClaw](https://github.com/openclaw/openclaw)** — Peter Steinberger's "personal AI assistant, the lobster way," shipped November 2025. It's good. It's the reason a lot of people first felt "oh, I can run my own agent." Hermes Agent ([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), 135 stars) shipped February 2026 and chose a different bet:
+If you've been agent-curious for more than a weekend, you've heard of **[OpenClaw](https://github.com/openclaw/openclaw)** — Peter Steinberger's "personal AI assistant, the lobster way," shipped November 2025. It's good. It's the reason a lot of people first felt "oh, I can run my own agent." Hermes Agent ([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), 135k stars) shipped February 2026 and chose a different bet:
 
 > **The Agent That Grows With You.** — that's the Hermes tagline, and it's not marketing fluff. It's the architecture.
 
