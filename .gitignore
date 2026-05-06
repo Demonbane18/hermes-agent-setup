@@ -31,6 +31,10 @@ gateways/shared/handoff/*.md
 diagrams/node_modules/
 diagrams/package-lock.json
 
+# --- Personal drafts (social posts, scratch notes) — never push -------------
+social/
+demo-script-fb.md
+
 # --- OS / editor / agent noise -----------------------------------------------
 .DS_Store
 Thumbs.db
