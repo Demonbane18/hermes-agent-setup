@@ -220,8 +220,6 @@ You also need:
 Before you start clicking and copy-pasting, here are four ideas this guide leans on hard. Skim the diagrams once. If something later feels confusing, scroll back here.
 
 > **You don't need to understand all of this to follow the steps.** The commands work as written. This section is here for the moment you ask _"wait, what is this actually doing?"_ — usually around Part 3.
->
-> _Diagrams below are pre-rendered SVGs in [`images/diagrams/`](./images/diagrams/). Source `.mmd` files live in [`diagrams/`](./diagrams/) — edit them and run `./diagrams/render-all.sh` to regenerate._
 
 ### What's a symlink? (and what exactly are we symlinking?)
 
