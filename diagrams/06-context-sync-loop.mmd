@@ -1,0 +1,12 @@
+sequenceDiagram
+    participant CC as Claude Code (laptop)
+    participant HC as hermes-context (GitHub)
+    participant H as Hermes (VPS)
+    participant U as User (Telegram)
+
+    CC->>HC: post-session hook commits + pushes
+    Note over H: cron every 15 min
+    H->>HC: git pull --rebase
+    U->>H: /hermes_context_autosync
+    H->>HC: immediate pull
+    H->>U: "here's where we left off..."

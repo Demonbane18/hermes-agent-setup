@@ -1,0 +1,23 @@
+sequenceDiagram
+    autonumber
+    participant U as You (Telegram)
+    participant W as Work Bot
+    participant V as Obsidian Vault<br/>(raw/, wiki/, index.md, log.md)
+    participant P as Personal Bot
+
+    U->>W: "save this article: <url>"
+    W->>V: drop article in raw/
+    W->>V: read raw + relevant wiki pages
+    Note over W: extract key facts,<br/>find existing entity/concept pages,<br/>flag contradictions
+    W->>V: write summary in wiki/sources/
+    W->>V: update 5–15 entity & concept pages
+    W->>V: append entry to log.md<br/>"## [2026-05-06] ingest | Article Title"
+    W->>V: refresh index.md
+    W-->>U: "ingested. updated 8 pages. anything to challenge?"
+
+    Note over U,P: ...later, from a different bot...
+
+    U->>P: "what do I know about X?"
+    P->>V: read index.md → find relevant pages
+    P->>V: read those wiki pages (already synthesized)
+    P-->>U: rich answer drawn from compounded knowledge<br/>(not re-derived from raw every time)

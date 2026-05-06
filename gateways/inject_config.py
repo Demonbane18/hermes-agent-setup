@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Pre-flight config injector for Hermes Gateway.
+
+Reads HERMES_TELEGRAM_BOT_TOKEN from the gateway's .env (already sourced into
+the environment by run.sh) and patches it into config.yaml under
+platforms.telegram.token. That way the secret token lives only in .env (which
+is gitignored) while config.yaml stays safe to commit.
+
+Run by run.sh before `hermes gateway run` for each gateway.
+
+Inputs (from environment, set by run.sh):
+  HERMES_HOME          Absolute path to the gateway directory (e.g. ~/gateways/work)
+  TOKEN_ENV            Override the env-var name to read (default:
+                       HERMES_TELEGRAM_BOT_TOKEN)
+"""
+import os
+import sys
+import yaml
+from pathlib import Path
+
+
+def inject_token(home: str, token_env: str, platform: str = "telegram"):
+    home_path = Path(home).expanduser().resolve()
+    config_file = home_path / "config.yaml"
+    env_file = home_path / ".env"
+
+    # 1) Try env first (run.sh already sourced .env into the process env).
+    token = os.getenv(token_env, "").strip()
+
+    # 2) Fall back to parsing the .env file directly (covers cases where
+    #    inject_config.py is invoked without run.sh as the wrapper).
+    if not token and env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith(f"{token_env}="):
+                token = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+
+    if not token:
+        print(
+            f"WARNING: {token_env} not set and not found in {env_file}",
+            file=sys.stderr,
+        )
+        return False
+
+    # Load existing config or start from empty.
+    if config_file.exists():
+        with open(config_file) as f:
+            config = yaml.safe_load(f) or {}
+    else:
+        config = {}
+
+    # Ensure the path exists, then write the token.
+    config.setdefault("platforms", {}).setdefault(platform, {})["token"] = token
+
+    # Atomic write (tmp + rename) so we never leave a half-written config.
+    tmp = config_file.with_suffix(".yaml.tmp")
+    with open(tmp, "w") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    tmp.replace(config_file)
+    print(f"Injected {token_env} into {config_file}")
+    return True
+
+
+if __name__ == "__main__":
+    home = os.environ.get("HERMES_HOME", "")
+    token_env = os.environ.get("TOKEN_ENV", "HERMES_TELEGRAM_BOT_TOKEN")
+    inject_token(home, token_env)

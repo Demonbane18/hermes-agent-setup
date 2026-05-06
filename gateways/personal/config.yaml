@@ -1,0 +1,100 @@
+# =============================================================================
+# Personal Agent — Hermes Gateway config
+# =============================================================================
+# Same shape as work/config.yaml. Tweak `model.default` to mimo-v2-flash if you
+# want a cheaper/faster default for casual chat (the personal voice rarely
+# needs the Pro model).
+# =============================================================================
+
+model:
+  default: mimo-v2.5-pro             # swap to mimo-v2-flash for casual chat
+  provider: custom:xiaomi-mimo
+  api_mode: chat_completions
+  fallback_providers:
+    - provider: openrouter
+      model: minimax/minimax-m2.7
+
+custom_providers:
+  - name: xiaomi-mimo
+    base_url: https://token-plan-sgp.xiaomimimo.com/v1
+    key_env: XIAOMI_MIMO_API_KEY
+
+providers: {}
+
+auxiliary:
+  compression:
+    provider: custom:xiaomi-mimo
+    model: mimo-v2-flash
+  title_generation:
+    provider: custom:xiaomi-mimo
+    model: mimo-v2-flash
+
+agent:
+  max_turns: 90
+  gateway_timeout: 1800
+  restart_drain_timeout: 60
+  service_tier: ''
+  tool_use_enforcement: auto
+  gateway_timeout_warning: 900
+  gateway_notify_interval: 600
+  verbose: false
+  reasoning_effort: medium
+  system_prompt: ''
+
+platforms:
+  telegram:
+    enabled: true
+    token: ''                        # injected by inject_config.py
+    extra:
+      require_pairing: false
+
+platform_toolsets:
+  cli:
+    - hermes-cli
+  telegram:
+    - hermes-telegram
+
+sessions_dir: ./sessions
+
+session_reset:
+  mode: both
+  idle_minutes: 1440
+  at_hour: 4
+
+streaming:
+  enabled: false
+
+approvals:
+  mode: manual
+  timeout: 60
+  cron_mode: deny
+
+command_allowlist: []
+quick_commands: {}
+hooks: {}
+hooks_auto_accept: false
+
+privacy:
+  redact_pii: false
+
+cron:
+  wrap_response: true
+  max_parallel_jobs: null
+
+code_execution:
+  mode: project
+  timeout: 300
+  max_tool_calls: 50
+
+logging:
+  level: INFO
+  max_size_mb: 5
+  backup_count: 3
+
+network:
+  force_ipv4: false
+
+_config_version: 22
+group_sessions_per_user: true
+
+TELEGRAM_HOME_CHANNEL: ''

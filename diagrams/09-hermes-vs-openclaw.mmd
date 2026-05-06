@@ -1,0 +1,24 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+---
+flowchart LR
+    subgraph OC["🦞 OpenClaw — gateway-first, broad reach"]
+        OC1["Many channels<br/>Many integrations"]
+        OC2["Reactive tools<br/><i>(no learning loop)</i>"]
+        OC3["Multi-agent<br/>orchestration"]
+    end
+
+    subgraph HA["🪽 Hermes Agent — agent-first, grows over time"]
+        HA1["Persistent memory<br/>+ auto-skills"]
+        HA2["Self-improves<br/>after each task"]
+        HA3["Sandboxed<br/>delegation"]
+    end
+
+    OC -. "auto-import<br/>~/.openclaw" .-> HA
+
+    classDef oc fill:#fde68a,stroke:#92400e,color:#1f2937;
+    classDef ha fill:#c4b5fd,stroke:#4c1d95,color:#1f2937;
+    class OC1,OC2,OC3 oc;
+    class HA1,HA2,HA3 ha;

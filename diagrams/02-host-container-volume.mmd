@@ -1,0 +1,30 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+---
+flowchart TB
+    you["💻 Your laptop<br/>(SSH terminal, Telegram client)"]
+
+    subgraph host["🖥️  Hostinger VPS HOST  — &#39;ssh root@ip&#39; lands here"]
+        docker_d["🐳 Docker daemon"]
+    end
+
+    subgraph container["📦 Hermes Container  — &#39;docker exec -it ... bash&#39; lands here"]
+        hermes_cli["hermes CLI<br/>~/gateways/work/<br/>~/gateways/personal/<br/>run.sh"]
+    end
+
+    subgraph volume["💾 Persistent Volume  — survives &#39;docker restart&#39;"]
+        vol_files["memories/  ·  skills/  ·  sessions/  ·  .env files"]
+    end
+
+    you --> host
+    host --> container
+    container --> volume
+    container <--> tg["💬 Telegram servers"]
+    container <--> models["🤖 Model APIs<br/>(MiMo / OpenRouter)"]
+
+    classDef vol fill:#16a34a,stroke:#fff,color:#fff;
+    class volume vol;
+    classDef cont fill:#2563eb,stroke:#fff,color:#fff;
+    class container cont;

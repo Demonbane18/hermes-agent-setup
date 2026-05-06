@@ -1,0 +1,39 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+---
+flowchart TB
+    subgraph schema_layer["⚙️ Schema layer (rules)"]
+        schema["SOUL.md / CLAUDE.md<br/>How the LLM should maintain the wiki<br/><i>You + the LLM co-evolve this</i>"]
+    end
+
+    subgraph nav["🧭 Navigation"]
+        idx["📇 index.md<br/>Catalog of every page<br/>(content-oriented)"]
+        log["📜 log.md<br/>Append-only changelog<br/>(time-oriented)"]
+    end
+
+    subgraph raw["📥 raw/ — your sources (IMMUTABLE)"]
+        article["Articles, PDFs, transcripts,<br/>podcast notes, screenshots"]
+    end
+
+    subgraph wiki["📚 wiki/ — LLM writes, you read"]
+        ent["Entity pages<br/>(people, projects, places)"]
+        concept["Concept pages<br/>(topics, frameworks, ideas)"]
+        summ["Source summaries<br/>(one per ingested item)"]
+        synth["Synthesis pages<br/>(cross-source themes)"]
+    end
+
+    schema -.governs.-> wiki
+    schema -.governs.-> idx
+    raw --> wiki
+    wiki <--> idx
+    wiki --> log
+    raw --> log
+
+    classDef immut fill:#dc2626,stroke:#fff,color:#fff;
+    class raw immut;
+    classDef llm fill:#7c3aed,stroke:#fff,color:#fff;
+    class wiki llm;
+    classDef schema_c fill:#0891b2,stroke:#fff,color:#fff;
+    class schema_layer schema_c;

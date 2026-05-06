@@ -1,0 +1,19 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+---
+flowchart LR
+    subgraph WITHOUT["❌ WITHOUT symlinks — separate brains"]
+        W1["work/memories/<br/>MEMORY.md (copy A)"]
+        P1["personal/memories/<br/>MEMORY.md (copy B)"]
+    end
+
+    subgraph WITH["✅ WITH symlinks — shared brain"]
+        REAL[("📁 work/memories/<br/>MEMORY.md<br/><i>the only real file</i>")]
+        W2["work/memories/"] --> REAL
+        P2["personal/memories/<br/><i>(symlink)</i>"] -. points to .-> REAL
+    end
+
+    classDef real fill:#7c3aed,stroke:#fff,color:#fff;
+    class REAL real;

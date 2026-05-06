@@ -1,0 +1,41 @@
+# =============================================================================
+# Never commit secrets or runtime state — only templates.
+# =============================================================================
+
+# --- Per-gateway secrets & state ---------------------------------------------
+gateways/*/.env
+gateways/*/sessions/
+gateways/*/memories/
+gateways/*/logs/
+gateways/*/gateway.pid
+gateways/*/gateway_state.json
+gateways/*/auth.json
+gateways/*/*_token.json
+gateways/*/*_secret.json
+gateways/*/models_dev_cache.json
+gateways/*/ollama_cloud_models_cache.json
+gateways/*/dogfood-output/
+gateways/*/bin/
+gateways/*/cron/
+
+# --- Skills are NOT gitignored ------------------------------------------------
+# skills/ holds the agent's procedural knowledge. Commit it; that's the whole
+# point of "compounding skills." Per-gateway in split-brain mode, symlinked
+# in full-share mode — git resolves both fine.
+
+# --- Shared handoff: keep README, ignore live notes --------------------------
+gateways/shared/handoff/*.md
+!gateways/shared/handoff/README.md
+
+# --- Diagram tooling ----------------------------------------------------------
+diagrams/node_modules/
+diagrams/package-lock.json
+
+# --- OS / editor / agent noise -----------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+.claude/

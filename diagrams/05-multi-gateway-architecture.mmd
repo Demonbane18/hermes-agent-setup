@@ -1,0 +1,51 @@
+flowchart TB
+    subgraph TG[Telegram]
+        WB[Work Bot @work_agent]
+        PB[Personal Bot @life_agent]
+        CB[Coach Bot @coach_agent]:::optional
+    end
+
+    subgraph VPS[Hostinger VPS]
+        subgraph WG[PRIMARY: ~/gateways/work]
+            WC[config.yaml<br/>+ work .env<br/>+ work system prompt]
+            WS[sessions/]
+            MEM[memories/ ★]
+            SK[skills/ ★]
+        end
+        subgraph PG[~/gateways/personal]
+            PC[config.yaml<br/>+ personal .env<br/>+ personal system prompt]
+            PS[sessions/]
+            PM[memories/ →]
+            PSK[skills/ →]
+        end
+        subgraph CG[~/gateways/coach]
+            CC[config.yaml<br/>+ coach .env<br/>+ coach system prompt]
+            CS[sessions/]
+            CM[memories/ →]
+            CSK[skills/ →]
+        end
+        CG:::optional
+    end
+
+    subgraph EXT[External]
+        OBS[Obsidian Vault]
+        HC[hermes-context repo]
+        MIMO[Xiaomi MiMo SGP]
+        OR[OpenRouter fallback]
+    end
+
+    WB <--> WG
+    PB <--> PG
+    CB <--> CG
+    PM -.symlink.-> MEM
+    PSK -.symlink.-> SK
+    CM -.symlink.-> MEM
+    CSK -.symlink.-> SK
+    MEM <--> OBS
+    SK <--> HC
+    WG --> MIMO
+    PG --> MIMO
+    CG --> MIMO
+    MIMO -.fallback.-> OR
+
+    classDef optional stroke-dasharray: 5 5;

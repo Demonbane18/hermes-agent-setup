@@ -1,0 +1,24 @@
+sequenceDiagram
+    participant You
+    participant TG as Telegram (cloud)
+    participant Bot as Work Bot<br/>(BotFather token)
+    participant GW as Work Gateway<br/>~/gateways/work/
+    participant Brain as Shared Brain<br/>(memories/, skills/)
+    participant LLM as Xiaomi MiMo
+    participant OR as OpenRouter<br/>(fallback)
+
+    You->>TG: "what did I commit yesterday?"
+    TG->>Bot: forwards via bot token
+    Bot->>GW: gateway picks up message
+    GW->>Brain: read MEMORY.md + relevant skills
+    GW->>LLM: prompt + context + tools
+    alt MiMo healthy
+        LLM-->>GW: response
+    else MiMo down / 401
+        GW->>OR: same request, fallback model
+        OR-->>GW: response
+    end
+    GW->>Brain: save anything important to MEMORY.md
+    GW->>Bot: formatted reply
+    Bot->>TG: send reply
+    TG->>You: message arrives
