@@ -31,6 +31,7 @@
 - [What is Hermes Agent?](#what-is-hermes-agent)
 - [Hermes Agent vs. OpenClaw — why this guide picked Hermes](#hermes-agent-vs-openclaw--why-this-guide-picked-hermes)
 - [Profiles vs. Dual Gateway — what's different here](#profiles-vs-dual-gateway--whats-different-here)
+- [Why one container, many gateways (and not N Docker containers)](#why-one-container-many-gateways-and-not-n-docker-containers)
 - [Prerequisites & Costs](#prerequisites--costs)
 - [How it works (visual primer for first-timers)](#how-it-works-visual-primer-for-first-timers)
   - [What's a symlink? (and what exactly are we symlinking?)](#whats-a-symlink-and-what-exactly-are-we-symlinking)
@@ -190,6 +191,35 @@ There are **three patterns** for running multiple Hermes bots. This guide focuse
 > - Freelancer juggling clients who must never see each other's data → **profiles**.
 > - One builder, casual home + work, doesn't mind a personal fact occasionally surfacing in the work bot → **full-share** (the default in this guide).
 > - One builder who has things the work bot should genuinely never repeat (medical, family, finances) → **split-brain** ([§3.11](#311-choosing-your-pattern-full-share-vs-split-brain)). Skills still compound across all bots; only deliberate, vault-stored knowledge crosses over.
+
+---
+
+## Why one container, many gateways (and not N Docker containers)
+
+Reasonable question: if Hermes already runs in a Docker container on the Hostinger 1-click, why not just spin up two containers — `hermes-work`, `hermes-personal` — and call it a day? Tried it. Don't.
+
+The whole point of this guide is **one shared brain, many voices**. Containers are a unit of *isolation*. Voices that share a brain don't want isolation between them — they want the opposite. So you separate at the right layer: **one container holds the brain, N gateway processes inside it present different faces to Telegram.**
+
+Every concern stacks the same direction:
+
+|                                | **One container, N gateways (this guide)**                                                                                                              | **N containers, one gateway each**                                                                                                                                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Shared brain**               | A symlink inside the same filesystem. One inode, every gateway process sees the exact same bytes the moment they're written.                            | A bind-mounted volume across containers. Two processes from two containers writing to the same SQLite/flat-file `memories/` race each other; nothing in Hermes coordinates locks across containers. Eventually you corrupt a memory file and don't notice for a week. |
+| **RAM**                        | Gateway processes are ~50–100 MB each. Four bots ≈ 400 MB total. Comfortable on KVM 2's 8 GB with room left for MCP servers and the model client.       | A full Hermes container idles around 1–2 GB once Python, MCP servers, and the model client are loaded. Four containers ≈ 4–8 GB just sitting there. KVM 2 starts swapping; you're forced to KVM 4 before adding a single skill. |
+| **Hostinger upgrade path**     | The 1-click template manages exactly one container (`hermes-agent`). Restart, upgrade, rollback — already wired up.                                     | Hostinger's template doesn't know about your extra containers. Their upgrades touch only the one they shipped. You inherit lifecycle for the rest — base image bumps, Python version drift, MCP version drift, all of it. |
+| **MCP servers & model client** | One set of MCP processes, one OpenRouter/MiMo client pool, one cron daemon. Shared across every gateway.                                                | Every container starts its own MCP stack and opens its own model connections. Multiplied API session count, multiplied warm-up time, multiplied debug surface when something misbehaves.                       |
+| **Cron / scheduled skills**    | One crontab. A single 6 AM "morning brief" task can read memories the work bot wrote yesterday and DM the personal bot the result.                      | Cron lives where? Pick a container. Now that container needs read access to the others' state, which means more bind mounts, which means we're back to the corruption problem in row 1.                        |
+| **Cross-bot handoff**          | Drop a file into `~/gateways/shared/handoff/` ([§3.12](#312-cross-gateway-handoff-sharedhandoff)) — every gateway sees it instantly, same filesystem.    | Requires a shared bind mount plus filesystem-event coordination across container boundaries. Doable, fragile, and you'll debug it at 11 PM the first time inotify drops an event.                               |
+| **Operational surface**        | One `run.sh`, one log stream, one `tmux`/systemd unit. Adding a fifth bot is one more folder + symlinks + 60 seconds.                                   | N `docker-compose` services (or N `docker run` invocations), N log streams, N restart policies, N env files to keep in sync. Adding a fifth bot is a config change everywhere.                                  |
+| **Backups**                    | `docker cp hermes-agent:/<volume>/skills ./skills-backup` and you have everything. One volume to snapshot.                                              | N volumes, possibly across N containers, each with partial state. You can do it; you just have to remember which container owns which authoritative copy.                                                       |
+
+A few honest cases where extra containers *do* make sense — and none of them apply to "I want a work bot and a personal bot":
+
+- **Hard tenant isolation** (multiple paying clients, compliance boundary, can't-leak-ever data). Use **profiles** for this, not extra containers — that's exactly what the upstream profile system was built for. See the table at [Profiles vs. Multi-Gateway](#profiles-vs-multi-gateway--three-ways-to-share-or-not).
+- **Different Hermes versions side-by-side** (you're testing an upgrade). Spin up a second container temporarily, point it at a copy of the volume, throw it away when you're done. Not a permanent setup.
+- **Genuinely different runtimes** (one bot needs a GPU passthrough, another doesn't). Different problem, different shape.
+
+For the "one builder, two-to-five voices, one shared brain" case this guide is built around, the bare-VPS-style pattern *inside* the existing container is the cheap, durable, boring choice. And boring is what you want from infra you don't think about.
 
 ---
 
@@ -456,12 +486,30 @@ When you `docker restart hermes-agent` or Hostinger upgrades the template, all t
 
 ### Manual install fallback
 
-If for some reason you can't or won't use the Hostinger 1-click — you're hosting elsewhere, the template was unavailable, you want bare metal — install Hermes manually on a fresh Ubuntu 24.04 box:
+If for some reason you can't or won't use the Hostinger 1-click — you're hosting elsewhere, the template was unavailable, you want bare metal — install Hermes manually on a fresh Ubuntu 24.04 box.
+
+**Just running on your laptop/desktop? Read this first.**
+
+If you're installing Hermes directly on your own computer (not on a remote VPS), the official quickstart is the simplest path of all — and most of this guide is overkill for that case:
+
+→ **[hermes-agent.nousresearch.com/docs/user-guide/profiles](https://hermes-agent.nousresearch.com/docs/user-guide/profiles)**
+
+> _Why this might be all you need:_ A lot of what this guide solves only matters when Hermes lives on a remote VPS that has to keep running while your laptop sleeps — persistent Docker volumes, restart-survival, cron across container reboots, dual-gateway symlinks for shared brain across personas. If everything sits on one machine and you're happy using Hermes's built-in **profiles** to separate contexts (work vs. personal vs. a client project), follow the upstream profiles guide and stop there. Come back to this README when you outgrow it — typically when you want the bot reachable while the laptop is closed, or you want one *shared* brain across multiple voices instead of isolated profile copies.
+
+**Quick install (one-liner, recommended for VPS):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+```
+
+> _What this does:_ Pulls the upstream installer, installs Python deps, clones Hermes into `~/.hermes/`, and puts the `hermes` CLI on your `$PATH`. Takes 2–3 minutes on a fresh KVM 2.
+
+**Manual install (if you want to see every step):**
 
 ```bash
 # Update the system & install dependencies
 apt update && apt upgrade -y
-apt install -y python3 python3-pip python3-venv git tmux
+apt install -y python3 python3-pip python3-venv git tmux curl
 
 # Clone & install Hermes
 git clone https://github.com/NousResearch/hermes-agent.git ~/.hermes/hermes-agent
@@ -469,7 +517,7 @@ cd ~/.hermes/hermes-agent
 ./setup-hermes.sh
 ```
 
-After it finishes (2–3 min), the `hermes` command is global on the host. Run `hermes model` and continue with [Part 2](#part-2-connect-your-first-telegram-bot).
+Either path leaves you with the same result: the `hermes` command is global on the host. Run `hermes --version` to confirm, then `hermes model` and continue with [Part 2](#part-2-connect-your-first-telegram-bot).
 
 > _Bare-metal mental model:_ When Hermes lives directly on the host (not in a container), every reference to "inside the container" in the rest of this guide just means "on the host shell." Skip the `docker exec` step, ignore the systemd unit needing `docker restart`, and the rest of the commands work as-is.
 
@@ -551,6 +599,14 @@ The pattern below uses **two bots (work + personal)** as the worked example beca
 
 > **Container note (Hostinger 1-click users):** every command in this part runs **inside** the Hermes container. Drop in with `docker exec -it hermes-agent bash` first. The `~/gateways/` path used throughout sits inside the container's persistent Docker volume, so everything you create here survives container restarts and template upgrades. Confirm your `~` is on the persistent mount with `df -h ~` — the device should match the volume `Destination` you saw in [§1.4](#14-find-the-persistent-volume-this-is-where-your-data-lives). If `~` isn't on the volume, replace `~/gateways/` with the actual mount path (e.g. `/data/gateways/`) everywhere below.
 
+> **Bare-VPS users (no Hermes installed yet):** if you're not on the Hostinger 1-click and you don't already have the `hermes` CLI on this box, install it first with the one-liner before doing anything in this part:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+> ```
+>
+> Confirm with `hermes --version`. Full bare-metal walkthrough (deps, manual clone, alternate paths) is in [§Manual install fallback](#manual-install-fallback). The rest of Part 3 then runs on your normal host shell — every "inside the container" instruction collapses to "on the host."
+
 ### 3.1 The directory layout
 
 All gateways live under `~/gateways/`. **Pick one as the "primary"** — it owns the real `memories/` and `skills/` folders. Every other gateway symlinks into the primary. Throughout the rest of this guide the primary is `work` and the second bot is `personal`, but the names are yours to pick.
@@ -588,7 +644,10 @@ All gateways live under `~/gateways/`. **Pick one as the "primary"** — it owns
 ### 3.2 Create the structure
 
 Stop the single bot first:
-
+```bash
+hermes gateway stop
+```
+If the gateway still won't disconnect:
 ```bash
 systemctl stop hermes-gateway.service 2>/dev/null || true
 pkill -f "hermes gateway" || true
