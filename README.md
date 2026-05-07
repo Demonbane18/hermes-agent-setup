@@ -1609,6 +1609,15 @@ The personal bot runs a `Daily Agenda` cron and pulls calendar + the day's task 
 </tr>
 </table>
 
+#### Scheduled book reading — personal bot
+
+A 19-day cron job drips one chapter of Neville Goddard's _At Your Command_ into Telegram each morning. Same primitive as the daily agenda, just pointed at a different skill — bot pulls the day's chunk, formats word count + read time, and posts it.
+
+<p align="center">
+  <img src="images/use-case/scheduled%20book%20read.png" alt="Personal bot posts Day 1/19 of At Your Command — 479 words, ~2 min read" width="520" />
+</p>
+<p align="center"><sub><em>Personal bot, Day 1/19 — cron fires `read_book` skill, bot replies in voice with chapter text and progress marker.</em></sub></p>
+
 #### Claude Code on the laptop → Hermes on the VPS
 
 This is the `hermes-context` bridge in action. End a Claude Code session, walk away, and the work bot already has the punch list when you ask.
@@ -1617,6 +1626,15 @@ This is the `hermes-context` bridge in action. End a Claude Code session, walk a
   <img src="images/use-case/claude%20code%20session%20to%20hermes-context.png" alt="Work bot returns sprint P0 list pulled from active-projects/ in hermes-context repo" width="640" />
 </p>
 <p align="center"><sub><em>"What's my tasks for today?" → bot reads <code>~/hermes-context/active-projects/&lt;project&gt;/</code> and replies with a P0/P0-followup/P0-ops punch list.</em></sub></p>
+
+#### Job scraper — work bot
+
+Cron-driven `job_scraper` skill hits Indeed, LinkedIn, Upwork on a schedule, dedupes against the previous run, and stages a fresh list. Asking _"show me updated job list"_ in chat replays the most recent batch grouped by source with direct apply links.
+
+<p align="center">
+  <img src="images/use-case/job%20scraper.png" alt="Work bot returns deduped job list — Indeed (1), LinkedIn (1), Upwork (18)" width="520" />
+</p>
+<p align="center"><sub><em>Work bot: scraper output grouped by source — Indeed 1, LinkedIn 1, Upwork 18 — every row a clickable URL straight to the listing.</em></sub></p>
 
 #### Dogfooding skill — agent QAs your own site
 

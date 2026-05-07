@@ -15,7 +15,7 @@ model:
 
 custom_providers:
   - name: xiaomi-mimo
-    base_url: https://token-plan-sgp.xiaomimimo.com/v1   # use ams or cn if your dashboard says so
+    base_url: https://token-plan-sgp.xiaomimimo.com/v1 # use ams or cn if your dashboard says so
     key_env: XIAOMI_MIMO_API_KEY
 
 providers: {}
@@ -23,14 +23,14 @@ providers: {}
 auxiliary:
   compression:
     provider: custom:xiaomi-mimo
-    model: mimo-v2-flash
+    model: mimo-v2.5-pro
   title_generation:
     provider: custom:xiaomi-mimo
-    model: mimo-v2-flash
+    model: mimo-v2.5-pro
 
 agent:
   max_turns: 90
-  gateway_timeout: 1800           # 30 minutes per turn
+  gateway_timeout: 1800 # 30 minutes per turn
   restart_drain_timeout: 60
   service_tier: ''
   tool_use_enforcement: auto
@@ -38,12 +38,12 @@ agent:
   gateway_notify_interval: 600
   verbose: false
   reasoning_effort: medium
-  system_prompt: ''                # leave empty — HERMES_EPHEMERAL_SYSTEM_PROMPT in .env wins
+  system_prompt: '' # leave empty — HERMES_EPHEMERAL_SYSTEM_PROMPT in .env wins
 
 platforms:
   telegram:
     enabled: true
-    token: ''                      # injected by inject_config.py at startup
+    token: '' # injected by inject_config.py at startup
     extra:
       require_pairing: false
 
@@ -57,8 +57,8 @@ sessions_dir: ./sessions
 
 session_reset:
   mode: both
-  idle_minutes: 1440               # auto-reset session after 24h idle
-  at_hour: 4                       # …or daily at 04:00 local time
+  idle_minutes: 1440 # auto-reset session after 24h idle
+  at_hour: 4 # …or daily at 04:00 local time
 
 streaming:
   enabled: false

@@ -7,7 +7,7 @@
 # =============================================================================
 
 model:
-  default: mimo-v2.5-pro             # swap to mimo-v2-flash for casual chat
+  default: mimo-v2.5-pro # swap to mimo-v2-flash for casual chat
   provider: custom:xiaomi-mimo
   api_mode: chat_completions
   fallback_providers:
@@ -24,10 +24,10 @@ providers: {}
 auxiliary:
   compression:
     provider: custom:xiaomi-mimo
-    model: mimo-v2-flash
+    model: mimo-v2.5-pro
   title_generation:
     provider: custom:xiaomi-mimo
-    model: mimo-v2-flash
+    model: mimo-v2.5-pro
 
 agent:
   max_turns: 90
@@ -44,7 +44,7 @@ agent:
 platforms:
   telegram:
     enabled: true
-    token: ''                        # injected by inject_config.py
+    token: '' # injected by inject_config.py
     extra:
       require_pairing: false
 
