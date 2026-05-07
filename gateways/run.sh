@@ -30,32 +30,37 @@ discover_gateways() {
 }
 
 # Source .env, inject token into config.yaml, exec hermes gateway run.
+# Runs in a subshell so per-gateway env vars never leak across gateways.
 inject_and_run() {
     local GW_DIR="$1"
     local GW_PATH="$SCRIPT_DIR/$GW_DIR"
-    [ -d "$GW_PATH" ] || { echo "❌ no such gateway: $GW_DIR"; return 1; }
 
-    export HERMES_HOME="$GW_PATH"
-    export HERMES_EPHEMERAL_SYSTEM_PROMPT=""
+    # Run everything in a subshell so env vars don't leak
+    (
+        export HERMES_HOME="$GW_PATH"
+        export HERMES_EPHEMERAL_SYSTEM_PROMPT=""
 
-    if [ -f "$GW_PATH/.env" ]; then
-        set -a
-        source "$GW_PATH/.env"
-        set +a
-    else
-        echo "❌ $GW_DIR/.env missing — copy .env.example and fill it in"
-        return 1
-    fi
+        if [ -f "$GW_PATH/.env" ]; then
+            set -a
+            source "$GW_PATH/.env"
+            set +a
+        fi
 
-    # Inject the bot token from the env into config.yaml so the file on disk
-    # stays portable (token in .env, config.yaml safe to commit).
-    python3 "$SCRIPT_DIR/inject_config.py"
+        # Sanity check the token before injection
+        if [ -z "$HERMES_TELEGRAM_BOT_TOKEN" ]; then
+            echo "[$GW_DIR] ERROR: HERMES_TELEGRAM_BOT_TOKEN not set"
+            exit 1
+        fi
+        echo "[$GW_DIR] Token length: ${#HERMES_TELEGRAM_BOT_TOKEN}"
 
-    echo "[$GW_DIR] Starting Hermes Gateway..."
-    echo "[$GW_DIR] Sessions: $HERMES_HOME/sessions"
+        python3 "$SCRIPT_DIR/inject_config.py"
 
-    cd "$GW_PATH"
-    $HERMES_BIN gateway run
+        echo "[$GW_DIR] Starting Hermes Gateway..."
+        echo "[$GW_DIR] Sessions: $HERMES_HOME/sessions"
+
+        cd "$GW_PATH"
+        exec $HERMES_BIN gateway run
+    )
 }
 
 CMD="${1:-all}"

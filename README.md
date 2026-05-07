@@ -1127,13 +1127,29 @@ custom_providers:
 auxiliary:
   compression:
     provider: custom:xiaomi-mimo
-    model: mimo-v2-flash
+    model: mimo-v2.5-pro
   title_generation:
     provider: custom:xiaomi-mimo
-    model: mimo-v2-flash
+    model: mimo-v2.5-pro
 ```
 
 For lighter-weight gateways (personal, coach, etc.), swap the default to `mimo-v2-flash` in their own `config.yaml` — cheaper, faster, fine for casual chat. Heavy-lift gateways (work, finance) keep `mimo-v2.5-pro`.
+
+> **⚠️ Compression context mismatch — keep auxiliary on `mimo-v2.5-pro`**
+>
+> If you route `auxiliary.compression` to `mimo-v2-flash`, Hermes will warn at startup:
+>
+> ```
+> Compression model mimo-v2-flash context is 262,144 tokens,
+> but the main model mimo-v2.5-pro's compression threshold was 524,288 tokens.
+> Auto-lowered this session's threshold to 262,144 tokens.
+> ```
+>
+> What this means: the compression model has a **smaller** context window than the main model's compression trigger, so Hermes silently halves how much history it tries to compress at once. You lose middle context faster.
+>
+> **Fix:** keep both `auxiliary.compression.model` and `auxiliary.title_generation.model` on `mimo-v2.5-pro` (524k context), even on flash-default gateways. The cost delta on auxiliary calls is negligible compared to losing conversation memory.
+>
+> Only downgrade auxiliary to flash if you've also lowered the main model's `compression.threshold` to ≤262,144 in `config.yaml` — otherwise the threshold mismatch wins and Hermes auto-clamps you anyway.
 
 Add the key to **every** gateway's `.env`:
 
@@ -1870,7 +1886,7 @@ Move anything outside the volume into it (`mv`), then update `run.sh` paths if n
 
 - Set a $5–10 cap on OpenRouter. Top up only when needed.
 - Monitor MiMo usage daily for the first week.
-- Route auxiliary tasks (compression, titles) to the cheap MiMo Flash model, not the Pro one.
+- Keep auxiliary tasks (compression, titles) on `mimo-v2.5-pro` to match its 524k context window — routing them to MiMo Flash auto-clamps the compression threshold to 262k and you lose middle context faster (see §5.3 callout). Auxiliary token cost is small; conversation memory isn't.
 - Disable compression entirely (`compression.enabled: false`) on the personal bot if it's mostly casual chat — savings add up.
 </details>
 
