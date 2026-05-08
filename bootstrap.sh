@@ -22,6 +22,14 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
+# Version
+# -----------------------------------------------------------------------------
+# Bump on every meaningful change so users running `curl ... | bash` can see
+# whether their copy matches the latest.
+BOOTSTRAP_VERSION="0.2.0"
+BOOTSTRAP_RELEASED="2026-05-08"
+
+# -----------------------------------------------------------------------------
 # Globals
 # -----------------------------------------------------------------------------
 SCRIPT_NAME="${0##*/}"
@@ -115,6 +123,7 @@ FLAGS
   --dry-run                   Print every action without executing
   --non-interactive           Fail loudly on missing required values instead
                               of prompting
+  -V, --version               Print bootstrap version and exit
   -h, --help                  This help
 
 STRATEGIES
@@ -1164,6 +1173,7 @@ EOF
 # -----------------------------------------------------------------------------
 while [ $# -gt 0 ]; do
     case "$1" in
+        --version|-V)         echo "bootstrap.sh $BOOTSTRAP_VERSION (released $BOOTSTRAP_RELEASED)"; exit 0 ;;
         --parent)             PARENT="$2"; shift 2 ;;
         --count)              COUNT="$2"; shift 2 ;;
         --names)              NAMES_RAW="$2"; shift 2 ;;
@@ -1189,6 +1199,8 @@ done
 # -----------------------------------------------------------------------------
 # Mode dispatch
 # -----------------------------------------------------------------------------
+log "bootstrap.sh v$BOOTSTRAP_VERSION ($BOOTSTRAP_RELEASED)"
+
 # Set up interactive input source. Important for `curl ... | bash` runs where
 # stdin is the script source — prompts must read from /dev/tty instead.
 init_tty
