@@ -45,6 +45,16 @@ NON_INTERACTIVE=0
 EXTRA_SCAN_PATHS=()
 CREATE_SOUL=0
 
+# Provider selection (defaults match the templates: xiaomi-mimo primary,
+# openrouter fallback). Override interactively or via --provider/--model/etc.
+PROVIDER=""             # e.g. xiaomi-mimo, anthropic, openai, gemini, openrouter,
+                        #      groq, deepseek, minimax, zai, ollama, custom
+MODEL=""                # default model id for the primary provider
+BASE_URL=""             # only for OpenAI-compatible custom providers
+KEY_ENV=""              # env var name holding the API key (e.g. ANTHROPIC_API_KEY)
+FALLBACK_PROVIDER=""    # fallback provider name; set to "none" or empty to skip
+FALLBACK_MODEL=""
+
 # Logged operations (so a final summary works even in --dry-run)
 OPS=()
 
@@ -71,24 +81,41 @@ INTERACTIVE
   it (Mode B); otherwise you'll be walked through a fresh setup (Mode A).
 
 FLAGS
-  --parent PATH           Parent folder for gateways (default: ~/gateways)
-  --count N               Number of gateways (fresh setup only)
-  --names a,b,c           Comma-separated gateway names (overrides --count)
-  --strategy STRATEGY     isolated | shared-skills | shared-both
-                          Aliases: none|skills|both|all
-                          Default: isolated (fresh) or auto-detected (--add)
-  --add                   Force Mode B (extend existing setup)
-  --soul                  Also create a SOUL.md scaffold per gateway
-  --scan-path PATH        Additional path to scan for existing setups
-                          (repeatable)
-  --repo-url URL          Base URL for fetching templates when no local
-                          templates/ directory exists
-                          (default: $HERMES_BOOTSTRAP_REPO_URL or the
-                          Demonbane18/hermes-agent-setup main branch)
-  --dry-run               Print every action without executing
-  --non-interactive       Fail loudly on missing required values instead of
-                          prompting
-  -h, --help              This help
+  --parent PATH               Parent folder for gateways (default: ~/gateways)
+  --count N                   Number of gateways (fresh setup only)
+  --names a,b,c               Comma-separated gateway names (overrides --count)
+  --strategy STRATEGY         isolated | shared-skills | shared-both
+                              Aliases: none|skills|both|all
+                              Default: isolated (fresh) or auto-detected (--add)
+  --provider NAME             LLM provider for the default model.
+                              Built-in: xiaomi-mimo (default), openrouter,
+                              anthropic, openai, gemini.
+                              Custom OpenAI-compatible: groq, deepseek,
+                              minimax, zai, ollama, custom.
+  --model ID                  Model ID for the primary provider. Defaults per
+                              provider (e.g. mimo-v2.5-pro, claude-sonnet-4-6,
+                              gpt-4o, gemini-2.5-pro).
+  --base-url URL              Override the provider base URL (mostly for
+                              region-specific MiMo endpoints or custom
+                              providers).
+  --key-env VAR               Override the env var name that holds the API key
+                              (default per provider, e.g. ANTHROPIC_API_KEY).
+  --fallback-provider NAME    Fallback provider (default: openrouter unless
+                              primary is openrouter; pass 'none' to skip).
+  --fallback-model ID         Fallback model id (default per provider).
+  --no-fallback               Shortcut for --fallback-provider none.
+  --add                       Force Mode B (extend existing setup)
+  --soul                      Also create a SOUL.md scaffold per gateway
+  --scan-path PATH            Additional path to scan for existing setups
+                              (repeatable)
+  --repo-url URL              Base URL for fetching run.sh / inject_config.py
+                              when no local templates/ directory exists
+                              (default: $HERMES_BOOTSTRAP_REPO_URL or the
+                              Demonbane18/hermes-agent-setup main branch)
+  --dry-run                   Print every action without executing
+  --non-interactive           Fail loudly on missing required values instead
+                              of prompting
+  -h, --help                  This help
 
 STRATEGIES
   isolated        Each gateway has its own memories/ and skills/. Default.
@@ -98,6 +125,35 @@ STRATEGIES
                   sharing one tool library.
   shared-both     memories/ AND skills/ symlinked to <parent>/_shared/.
                   Multiple Telegram front-ends to the same logical agent.
+
+PROVIDERS (hard-coded model lists; check provider for newest)
+  xiaomi-mimo  mimo-v2.5-pro, mimo-v2-flash
+               base_url: https://token-plan-{sgp,ams,cn}.xiaomimimo.com/v1
+               key_env: XIAOMI_MIMO_API_KEY
+  openrouter   anthropic/claude-sonnet-4, openai/gpt-4o, google/gemini-2.5-pro
+               (built-in provider, no base_url)
+               key_env: OPENROUTER_API_KEY
+  anthropic    claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5
+               (built-in)  key_env: ANTHROPIC_API_KEY
+  openai       gpt-4o, gpt-4o-mini, o1, o3-mini
+               (built-in)  key_env: OPENAI_API_KEY
+  gemini       gemini-2.5-pro, gemini-2.5-flash
+               (built-in)  key_env: GEMINI_API_KEY
+  groq         llama-3.3-70b-versatile, mixtral-8x7b-32768
+               base_url: https://api.groq.com/openai/v1
+               key_env: GROQ_API_KEY
+  deepseek     deepseek-chat, deepseek-reasoner
+               base_url: https://api.deepseek.com/v1
+               key_env: DEEPSEEK_API_KEY
+  minimax      minimax-m2.7
+               base_url: https://api.minimax.chat/v1
+               key_env: MINIMAX_API_KEY
+  zai          glm-4-plus, glm-4-flash
+               base_url: https://open.bigmodel.cn/api/paas/v4
+               key_env: ZAI_API_KEY
+  ollama       llama3.1:8b, qwen2.5:14b, deepseek-r1:14b (local, no key)
+               base_url: http://localhost:11434/v1
+  custom       provide --model, --base-url, --key-env yourself
 
 NAME RULES
   Gateway names match ^[A-Za-z0-9][A-Za-z0-9_-]*$. No leading dot or
@@ -109,16 +165,39 @@ SAFETY
   with a non-matching universal template.
 
 EXAMPLES
-  # Fresh setup, 3 isolated gateways
-  bootstrap.sh --parent ~/gateways --count 3 --names alpha,beta,gamma \
+  # Fresh setup with the defaults — xiaomi-mimo + openrouter fallback
+  bootstrap.sh --parent ~/gateways --count 3 --names alpha,beta,gamma \\
       --strategy isolated
 
-  # Add 2 gateways to an existing parent (strategy auto-detected)
-  bootstrap.sh --add --parent ~/gateways --names delta,epsilon
+  # Anthropic primary, OpenRouter fallback
+  bootstrap.sh --parent ~/agents --count 1 --names assistant \\
+      --strategy isolated --provider anthropic --model claude-opus-4-7 \\
+      --non-interactive
+
+  # OpenAI primary, no fallback
+  bootstrap.sh --parent ~/bots --count 2 --names work,personal \\
+      --strategy shared-both --provider openai --model gpt-4o \\
+      --no-fallback --non-interactive
+
+  # Local Ollama, no API keys at all
+  bootstrap.sh --parent ~/local-bots --count 1 --names dev \\
+      --strategy isolated --provider ollama --model llama3.1:8b \\
+      --no-fallback --non-interactive
+
+  # Custom OpenAI-compatible provider
+  bootstrap.sh --parent ~/gateways --count 1 --names myagent \\
+      --provider custom --model my-llm-v1 \\
+      --base-url https://api.example.com/v1 --key-env EXAMPLE_API_KEY \\
+      --no-fallback --non-interactive
+
+  # Add 2 gateways to an existing parent (strategy + provider auto-inherited
+  # from the existing config.yaml; pass --provider to override)
+  bootstrap.sh --add --parent ~/gateways --names delta,epsilon \\
+      --non-interactive
 
   # Curl-piped, non-interactive
-  curl -fsSL .../bootstrap.sh | bash -s -- \
-      --parent ~/agents --count 2 --names work,personal \
+  curl -fsSL .../bootstrap.sh | bash -s -- \\
+      --parent ~/agents --count 2 --names work,personal \\
       --strategy shared-both --non-interactive
 EOF
 }
@@ -171,6 +250,460 @@ confirm() {
     local reply
     read -r -p "$msg [$default]: " reply
     echo "${reply:-$default}"
+}
+
+# -----------------------------------------------------------------------------
+# Provider registry
+# -----------------------------------------------------------------------------
+# Each entry: <default_model>|<base_url>|<key_env>|<is_builtin>
+#   built-in providers are referenced as `provider: <name>` in config.yaml.
+#   non-built-in providers go under `custom_providers:` with `name`/`base_url`/`key_env`.
+provider_info() {
+    case "$1" in
+        xiaomi-mimo) echo "mimo-v2.5-pro|https://token-plan-sgp.xiaomimimo.com/v1|XIAOMI_MIMO_API_KEY|0" ;;
+        openrouter)  echo "anthropic/claude-sonnet-4||OPENROUTER_API_KEY|1" ;;
+        anthropic)   echo "claude-sonnet-4-6||ANTHROPIC_API_KEY|1" ;;
+        openai)      echo "gpt-4o||OPENAI_API_KEY|1" ;;
+        gemini)      echo "gemini-2.5-pro||GEMINI_API_KEY|1" ;;
+        groq)        echo "llama-3.3-70b-versatile|https://api.groq.com/openai/v1|GROQ_API_KEY|0" ;;
+        deepseek)    echo "deepseek-chat|https://api.deepseek.com/v1|DEEPSEEK_API_KEY|0" ;;
+        minimax)     echo "minimax-m2.7|https://api.minimax.chat/v1|MINIMAX_API_KEY|0" ;;
+        zai)         echo "glm-4-plus|https://open.bigmodel.cn/api/paas/v4|ZAI_API_KEY|0" ;;
+        ollama)      echo "llama3.1:8b|http://localhost:11434/v1||0" ;;
+        custom)      echo "|||0" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Hard-coded model catalog. As-of bootstrap-script date — providers add and
+# deprecate models constantly. Hit the provider's /v1/models endpoint for the
+# live list, then edit config.yaml manually.
+provider_models() {
+    case "$1" in
+        xiaomi-mimo) echo "mimo-v2.5-pro mimo-v2-flash" ;;
+        openrouter)  echo "anthropic/claude-sonnet-4 anthropic/claude-opus-4 openai/gpt-4o google/gemini-2.5-pro meta-llama/llama-3.3-70b-instruct" ;;
+        anthropic)   echo "claude-opus-4-7 claude-sonnet-4-6 claude-haiku-4-5" ;;
+        openai)      echo "gpt-4o gpt-4o-mini o1 o3-mini" ;;
+        gemini)      echo "gemini-2.5-pro gemini-2.5-flash" ;;
+        groq)        echo "llama-3.3-70b-versatile mixtral-8x7b-32768 llama-3.1-8b-instant" ;;
+        deepseek)    echo "deepseek-chat deepseek-reasoner" ;;
+        minimax)     echo "minimax-m2.7" ;;
+        zai)         echo "glm-4-plus glm-4-flash" ;;
+        ollama)      echo "llama3.1:8b qwen2.5:14b deepseek-r1:14b mistral:7b" ;;
+        *) echo "" ;;
+    esac
+}
+
+provider_is_builtin() {
+    case "$1" in
+        anthropic|openai|openrouter|gemini) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+yaml_provider_ref() {
+    if provider_is_builtin "$1"; then echo "$1"; else echo "custom:$1"; fi
+}
+
+# Resolve PROVIDER, MODEL, BASE_URL, KEY_ENV, FALLBACK_PROVIDER, FALLBACK_MODEL.
+# Honours flags first, prompts only for what's missing in interactive mode.
+prompt_provider() {
+    # Default in non-interactive mode if still unset.
+    if [ -z "$PROVIDER" ]; then
+        if [ "$NON_INTERACTIVE" = 1 ]; then
+            PROVIDER="xiaomi-mimo"
+        else
+            cat <<'EOF'
+
+Default LLM provider for these gateways:
+
+   1) xiaomi-mimo  (default — Token Plan / Orbit, free tokens via Orbit program)
+   2) openrouter             (multi-model gateway, sk-or-v1-...)
+   3) anthropic              (Claude API)
+   4) openai                 (OpenAI API)
+   5) gemini                 (Google Gemini)
+   6) groq                   (fast Llama / Mixtral)
+   7) deepseek               (DeepSeek chat & reasoner)
+   8) minimax                (MiniMax)
+   9) zai                    (Z.AI / GLM)
+  10) ollama                 (local Ollama, no API key)
+  11) custom                 (you supply name + base_url + key_env)
+
+EOF
+            local sel; sel="$(prompt "Pick 1-11" "1")"
+            case "$sel" in
+                1|xiaomi-mimo) PROVIDER="xiaomi-mimo" ;;
+                2|openrouter)  PROVIDER="openrouter" ;;
+                3|anthropic)   PROVIDER="anthropic" ;;
+                4|openai)      PROVIDER="openai" ;;
+                5|gemini)      PROVIDER="gemini" ;;
+                6|groq)        PROVIDER="groq" ;;
+                7|deepseek)    PROVIDER="deepseek" ;;
+                8|minimax)     PROVIDER="minimax" ;;
+                9|zai)         PROVIDER="zai" ;;
+                10|ollama)     PROVIDER="ollama" ;;
+                11|custom)     PROVIDER="custom" ;;
+                *) die "invalid pick: $sel" ;;
+            esac
+        fi
+    fi
+
+    # Custom provider — gather everything from the user (or flags).
+    if [ "$PROVIDER" = "custom" ]; then
+        if [ "$NON_INTERACTIVE" = 1 ]; then
+            [ -n "$MODEL" ] && [ -n "$BASE_URL" ] && [ -n "$KEY_ENV" ] \
+                || die "--provider custom requires --model, --base-url, --key-env"
+        fi
+        local cname=""
+        if [ "$NON_INTERACTIVE" = 0 ]; then
+            cname="$(prompt "Provider short name (a-z0-9-)" "myprovider")"
+        else
+            cname="${HERMES_CUSTOM_PROVIDER_NAME:-myprovider}"
+        fi
+        [[ "$cname" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "invalid custom provider name: $cname"
+        [ -z "$MODEL" ]    && MODEL="$(prompt "Default model id" "")"
+        [ -z "$BASE_URL" ] && BASE_URL="$(prompt "Base URL (OpenAI-compatible /v1)" "")"
+        [ -z "$KEY_ENV" ]  && KEY_ENV="$(prompt "Env var name for API key" "MY_API_KEY")"
+        PROVIDER="$cname"
+    else
+        local info; info="$(provider_info "$PROVIDER")" \
+            || die "unknown provider: $PROVIDER (see --help)"
+        local def_model def_url def_key _builtin
+        IFS='|' read -r def_model def_url def_key _builtin <<<"$info"
+
+        # Model
+        if [ -z "$MODEL" ]; then
+            if [ "$NON_INTERACTIVE" = 1 ]; then
+                MODEL="$def_model"
+            else
+                local models; models="$(provider_models "$PROVIDER")"
+                if [ -n "$models" ]; then
+                    echo
+                    echo "Models for $PROVIDER (hard-coded list — check the provider's /v1/models for newest):"
+                    local i=1 m
+                    for m in $models; do printf "  %2d) %s\n" "$i" "$m"; i=$((i+1)); done
+                    printf "  %2d) (type your own)\n" "$i"
+                    local sel; sel="$(prompt "Pick (default 1)" "1")"
+                    if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -lt "$i" ]; then
+                        MODEL="$(echo "$models" | awk -v n="$sel" '{print $n}')"
+                    else
+                        MODEL="$(prompt "Type model id" "$def_model")"
+                    fi
+                else
+                    MODEL="$def_model"
+                fi
+            fi
+        fi
+
+        # Base URL (skip for built-in providers — they don't need one)
+        if [ -z "$BASE_URL" ]; then
+            BASE_URL="$def_url"
+            # Xiaomi MiMo region picker
+            if [ "$PROVIDER" = "xiaomi-mimo" ] && [ "$NON_INTERACTIVE" = 0 ]; then
+                echo
+                echo "Xiaomi MiMo region (must match your dashboard's dedicated URL):"
+                echo "   1) Singapore (sgp) [default]"
+                echo "   2) Amsterdam (ams)"
+                echo "   3) China (cn)"
+                local r; r="$(prompt "Pick" "1")"
+                case "$r" in
+                    2) BASE_URL="https://token-plan-ams.xiaomimimo.com/v1" ;;
+                    3) BASE_URL="https://token-plan-cn.xiaomimimo.com/v1" ;;
+                    *) BASE_URL="https://token-plan-sgp.xiaomimimo.com/v1" ;;
+                esac
+            fi
+        fi
+
+        # Key env var
+        [ -z "$KEY_ENV" ] && KEY_ENV="$def_key"
+    fi
+
+    # Fallback provider
+    if [ -z "$FALLBACK_PROVIDER" ]; then
+        if [ "$NON_INTERACTIVE" = 1 ]; then
+            # Sensible default: openrouter unless the primary IS openrouter
+            if [ "$PROVIDER" = "openrouter" ]; then
+                FALLBACK_PROVIDER="none"
+            else
+                FALLBACK_PROVIDER="openrouter"
+            fi
+        else
+            local default_fb="openrouter"
+            [ "$PROVIDER" = "openrouter" ] && default_fb="none"
+            local fb; fb="$(prompt "Fallback provider (or 'none')" "$default_fb")"
+            FALLBACK_PROVIDER="${fb:-none}"
+        fi
+    fi
+
+    if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ]; then
+        if [ -z "$FALLBACK_MODEL" ]; then
+            local fb_info; fb_info="$(provider_info "$FALLBACK_PROVIDER" 2>/dev/null)" \
+                || die "unknown fallback provider: $FALLBACK_PROVIDER"
+            local fb_def_model
+            IFS='|' read -r fb_def_model _ _ _ <<<"$fb_info"
+            FALLBACK_MODEL="${fb_def_model:-$MODEL}"
+            # OpenRouter routes to Anthropic models by default if primary is custom
+            if [ "$FALLBACK_PROVIDER" = "openrouter" ] && [ -z "$fb_def_model" ]; then
+                FALLBACK_MODEL="anthropic/claude-sonnet-4"
+            fi
+        fi
+    fi
+
+    log "Provider: primary=$PROVIDER model=$MODEL${BASE_URL:+ base=$BASE_URL}${KEY_ENV:+ key=$KEY_ENV}"
+    if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ]; then
+        log "Provider: fallback=$FALLBACK_PROVIDER model=$FALLBACK_MODEL"
+    else
+        log "Provider: no fallback"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Generate config.yaml content for the chosen provider(s).
+# Always writes a complete config.yaml — independent of templates/ — so the
+# provider section is in sync with the .env keys.
+# -----------------------------------------------------------------------------
+generate_config_yaml() {
+    local out="$1"
+    {
+        cat <<EOF
+# =============================================================================
+# Hermes Gateway config — generated by bootstrap.sh
+# =============================================================================
+# Safe to commit. The Telegram bot token gets injected into
+# platforms.telegram.token at startup by inject_config.py — DO NOT paste
+# tokens here directly.
+#
+# To swap providers / models manually: edit the model + custom_providers
+# blocks below. See README §"LLM Provider Reference" for the supported
+# provider list, base URLs, and example model IDs.
+# =============================================================================
+
+model:
+  default: $MODEL
+  provider: $(yaml_provider_ref "$PROVIDER")
+  api_mode: chat_completions
+EOF
+
+        if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ]; then
+            cat <<EOF
+  fallback_providers:
+    - provider: $(yaml_provider_ref "$FALLBACK_PROVIDER")
+      model: $FALLBACK_MODEL
+EOF
+        fi
+
+        # custom_providers block — only emitted when at least one of the
+        # primary/fallback is non-built-in.
+        local need_custom=0
+        provider_is_builtin "$PROVIDER" || need_custom=1
+        if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ] \
+            && [ "$FALLBACK_PROVIDER" != "$PROVIDER" ] \
+            && ! provider_is_builtin "$FALLBACK_PROVIDER"; then
+            need_custom=1
+        fi
+
+        echo
+        if [ "$need_custom" = 1 ]; then
+            echo "custom_providers:"
+            if ! provider_is_builtin "$PROVIDER"; then
+                cat <<EOF
+  - name: $PROVIDER
+    base_url: $BASE_URL
+EOF
+                if [ -n "$KEY_ENV" ]; then
+                    echo "    key_env: $KEY_ENV"
+                fi
+            fi
+            if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ] \
+                && [ "$FALLBACK_PROVIDER" != "$PROVIDER" ] \
+                && ! provider_is_builtin "$FALLBACK_PROVIDER"; then
+                local fb_info fb_url fb_key
+                fb_info="$(provider_info "$FALLBACK_PROVIDER")"
+                IFS='|' read -r _ fb_url fb_key _ <<<"$fb_info"
+                cat <<EOF
+  - name: $FALLBACK_PROVIDER
+    base_url: $fb_url
+    key_env: $fb_key
+EOF
+            fi
+        fi
+
+        # providers block — built-in providers may be configured here.
+        echo
+        echo "providers: {}"
+
+        # Auxiliary tasks (compression + title generation) — route to the
+        # primary provider's model so the context window matches.
+        cat <<EOF
+
+auxiliary:
+  compression:
+    provider: $(yaml_provider_ref "$PROVIDER")
+    model: $MODEL
+  title_generation:
+    provider: $(yaml_provider_ref "$PROVIDER")
+    model: $MODEL
+EOF
+
+        # Standard rest-of-config (matches templates/config.yaml.template).
+        cat <<'EOF'
+
+agent:
+  max_turns: 90
+  gateway_timeout: 1800 # 30 minutes per turn
+  restart_drain_timeout: 60
+  service_tier: ''
+  tool_use_enforcement: auto
+  gateway_timeout_warning: 900
+  gateway_notify_interval: 600
+  verbose: false
+  reasoning_effort: medium
+  system_prompt: '' # leave empty — HERMES_EPHEMERAL_SYSTEM_PROMPT in .env wins
+
+platforms:
+  telegram:
+    enabled: true
+    token: '' # injected by inject_config.py at startup
+    extra:
+      require_pairing: false
+
+platform_toolsets:
+  cli:
+    - hermes-cli
+  telegram:
+    - hermes-telegram
+
+sessions_dir: ./sessions
+
+session_reset:
+  mode: both
+  idle_minutes: 1440 # auto-reset session after 24h idle
+  at_hour: 4 # …or daily at 04:00 local time
+
+streaming:
+  enabled: false
+
+approvals:
+  mode: manual
+  timeout: 60
+  cron_mode: deny
+
+command_allowlist: []
+quick_commands: {}
+hooks: {}
+hooks_auto_accept: false
+
+privacy:
+  redact_pii: false
+
+cron:
+  wrap_response: true
+  max_parallel_jobs: null
+
+code_execution:
+  mode: project
+  timeout: 300
+  max_tool_calls: 50
+
+logging:
+  level: INFO
+  max_size_mb: 5
+  backup_count: 3
+
+network:
+  force_ipv4: false
+
+_config_version: 22
+group_sessions_per_user: true
+
+# Set this to your own Telegram chat ID if you want the bot to post home-channel
+# notifications (cron summaries, errors, etc.). Leave blank to disable.
+TELEGRAM_HOME_CHANNEL: ''
+EOF
+    } > "$out"
+}
+
+# -----------------------------------------------------------------------------
+# Generate .env content with the right API-key placeholders for the chosen
+# provider(s). Mirrors templates/.env.template, but swaps the provider keys.
+# -----------------------------------------------------------------------------
+generate_env_content() {
+    local out="$1"
+    {
+        cat <<'EOF'
+# =============================================================================
+# Hermes Gateway .env — generated by bootstrap.sh
+# =============================================================================
+# 1. Fill in every value below before launching.
+# 2. NEVER commit this file. The repo .gitignore excludes it.
+# 3. Permissions are chmod 600 — Hermes refuses world-readable env files.
+# =============================================================================
+
+# --- Telegram identity --------------------------------------------------------
+# From @BotFather -> /newbot -> copy the token. Each gateway needs its OWN
+# token (Telegram only allows one polling process per token).
+HERMES_TELEGRAM_BOT_TOKEN=***
+
+# Comma-separated Telegram user IDs allowed to talk to this bot.
+# Get yours from @userinfobot. Leave blank to allow ALL (not recommended).
+TELEGRAM_ALLOWED_USERS=
+
+# --- Operational rules (system prompt) ----------------------------------------
+# Loaded by run.sh into HERMES_EPHEMERAL_SYSTEM_PROMPT at startup.
+# Identity/personality goes in SOUL.md (created alongside this file by
+# bootstrap when --soul flag is set). This var handles behavior, tools, and
+# constraints. Edit freely — this is what makes each bot's voice different.
+HERMES_EPHEMERAL_SYSTEM_PROMPT="DOMAIN:
+- Replace this block with what this gateway is for.
+
+RESPONSE FORMAT:
+- Phone-screen friendly (Telegram delivery).
+- Lead with the recommendation, then the reasoning.
+- Use code blocks for commands, configs, and code.
+
+TOOL USAGE:
+- Use search/web tools before claiming something doesn't exist.
+- Delegate to subagents for parallel research.
+- Use cron jobs for scheduled automation.
+
+CONSTRAINTS:
+- If a request is ambiguous, ask one clarifying question, not five.
+- Never invent API endpoints, library functions, or pricing.
+- No moralizing. The user is an adult.
+
+OUTPUT STRUCTURE:
+- Default to short answers. Expand only when complexity demands it.
+- Use markdown formatting: headers for sections, code blocks for commands."
+
+# --- Model providers ----------------------------------------------------------
+EOF
+
+        if [ -n "$KEY_ENV" ]; then
+            echo "# Primary: $PROVIDER ($MODEL)"
+            echo "$KEY_ENV=***"
+        else
+            echo "# Primary: $PROVIDER ($MODEL) — no API key required (e.g. local Ollama)"
+        fi
+
+        if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ]; then
+            local fb_info fb_key
+            fb_info="$(provider_info "$FALLBACK_PROVIDER" 2>/dev/null || true)"
+            IFS='|' read -r _ _ fb_key _ <<<"$fb_info"
+            if [ -n "$fb_key" ] && [ "$fb_key" != "$KEY_ENV" ]; then
+                echo
+                echo "# Fallback: $FALLBACK_PROVIDER ($FALLBACK_MODEL)"
+                echo "$fb_key=***"
+            fi
+        fi
+
+        cat <<'EOF'
+
+# --- Companion paths ----------------------------------------------------------
+# Absolute path to your shared Obsidian vault. Same path in every gateway's
+# .env (cross-bot durable knowledge layer). Leave blank to skip.
+OBSIDIAN_VAULT_PATH=
+EOF
+    } > "$out"
 }
 
 # -----------------------------------------------------------------------------
@@ -276,11 +809,23 @@ build_gateway() {
     op "mkdir -p $gw_path/sessions"
     [ "$DRY_RUN" = 1 ] || mkdir -p "$gw_path/sessions"
 
-    write_file_if_absent ".env.template" "$gw_path/.env"
+    # .env — generated from the chosen provider, never overwritten.
+    if [ -e "$gw_path/.env" ]; then
+        op "[skip] $gw_path/.env exists (no overwrite)"
+    else
+        op "generate .env -> $gw_path/.env (provider=$PROVIDER)"
+        [ "$DRY_RUN" = 1 ] || generate_env_content "$gw_path/.env"
+    fi
     op "chmod 600 $gw_path/.env"
     [ "$DRY_RUN" = 1 ] || { [ -f "$gw_path/.env" ] && chmod 600 "$gw_path/.env"; }
 
-    write_file_if_absent "config.yaml.template" "$gw_path/config.yaml"
+    # config.yaml — generated from the chosen provider, never overwritten.
+    if [ -e "$gw_path/config.yaml" ]; then
+        op "[skip] $gw_path/config.yaml exists (no overwrite)"
+    else
+        op "generate config.yaml -> $gw_path/config.yaml (provider=$PROVIDER model=$MODEL)"
+        [ "$DRY_RUN" = 1 ] || generate_config_yaml "$gw_path/config.yaml"
+    fi
 
     if [ "$CREATE_SOUL" = 1 ]; then
         if [ ! -e "$gw_path/SOUL.md" ]; then
@@ -443,10 +988,13 @@ EOF
     fi
     STRATEGY="$(normalize_strategy "$STRATEGY")"
 
+    prompt_provider
+
     log "Plan:"
     log "  parent:   $PARENT"
     log "  gateways: ${names[*]}"
     log "  strategy: $STRATEGY"
+    log "  provider: $PROVIDER ($MODEL)${FALLBACK_PROVIDER:+ -> fallback $FALLBACK_PROVIDER ($FALLBACK_MODEL)}"
     log "  templates: $([ -d "${SCRIPT_DIR:-/nope}/templates" ] && echo "local ($SCRIPT_DIR/templates)" || echo "remote ($REPO_URL)")"
 
     if [ "$NON_INTERACTIVE" = 0 ] && [ "$DRY_RUN" = 0 ]; then
@@ -532,6 +1080,10 @@ mode_b_add() {
     log "  add:      ${names[*]}"
     log "  strategy: $STRATEGY"
 
+    prompt_provider
+
+    log "  provider: $PROVIDER ($MODEL)${FALLBACK_PROVIDER:+ -> fallback $FALLBACK_PROVIDER ($FALLBACK_MODEL)}"
+
     if [ "$NON_INTERACTIVE" = 0 ] && [ "$DRY_RUN" = 0 ]; then
         local ok; ok="$(confirm "Proceed?" "Y")"
         [[ "$ok" =~ ^[Yy] ]] || die "aborted"
@@ -586,17 +1138,24 @@ EOF
 # -----------------------------------------------------------------------------
 while [ $# -gt 0 ]; do
     case "$1" in
-        --parent)           PARENT="$2"; shift 2 ;;
-        --count)            COUNT="$2"; shift 2 ;;
-        --names)            NAMES_RAW="$2"; shift 2 ;;
-        --strategy)         STRATEGY="$2"; shift 2 ;;
-        --add)              MODE="add"; shift ;;
-        --soul)             CREATE_SOUL=1; shift ;;
-        --scan-path)        EXTRA_SCAN_PATHS+=("$2"); shift 2 ;;
-        --repo-url)         REPO_URL="$2"; shift 2 ;;
-        --dry-run)          DRY_RUN=1; shift ;;
-        --non-interactive)  NON_INTERACTIVE=1; shift ;;
-        -h|--help)          usage; exit 0 ;;
+        --parent)             PARENT="$2"; shift 2 ;;
+        --count)              COUNT="$2"; shift 2 ;;
+        --names)              NAMES_RAW="$2"; shift 2 ;;
+        --strategy)           STRATEGY="$2"; shift 2 ;;
+        --provider)           PROVIDER="$2"; shift 2 ;;
+        --model)              MODEL="$2"; shift 2 ;;
+        --base-url)           BASE_URL="$2"; shift 2 ;;
+        --key-env)            KEY_ENV="$2"; shift 2 ;;
+        --fallback-provider)  FALLBACK_PROVIDER="$2"; shift 2 ;;
+        --fallback-model)     FALLBACK_MODEL="$2"; shift 2 ;;
+        --no-fallback)        FALLBACK_PROVIDER="none"; shift ;;
+        --add)                MODE="add"; shift ;;
+        --soul)               CREATE_SOUL=1; shift ;;
+        --scan-path)          EXTRA_SCAN_PATHS+=("$2"); shift 2 ;;
+        --repo-url)           REPO_URL="$2"; shift 2 ;;
+        --dry-run)            DRY_RUN=1; shift ;;
+        --non-interactive)    NON_INTERACTIVE=1; shift ;;
+        -h|--help)            usage; exit 0 ;;
         *) die "unknown flag: $1 (try --help)" ;;
     esac
 done

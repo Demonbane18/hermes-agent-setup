@@ -52,6 +52,7 @@
   - [3.11 Adding a new gateway later](#311-adding-a-new-gateway-later)
   - [3.12 Cross-gateway handoff (`_shared/handoff/`)](#312-cross-gateway-handoff-_sharedhandoff)
   - [3.13 Set bot commands in @BotFather](#313-set-bot-commands-in-botfather-small-qol-win)
+  - [3.14 LLM Provider Reference](#314-llm-provider-reference)
 - [Part 4: OpenRouter API Setup](#part-4-openrouter-api-setup)
 - [Part 5: Xiaomi MiMo (free / cheap inference)](#part-5-xiaomi-mimo-free--cheap-inference)
 - [Part 6: Add an Obsidian Second Brain](#part-6-add-an-obsidian-second-brain)
@@ -797,8 +798,8 @@ The variables you fill in (per gateway):
 | `HERMES_TELEGRAM_BOT_TOKEN` | The token BotFather gave you for *this* bot. Different per gateway. |
 | `TELEGRAM_ALLOWED_USERS` | Comma-separated Telegram user IDs allowed to talk to this bot ([@userinfobot](https://t.me/userinfobot)). Blank = anyone. |
 | `HERMES_EPHEMERAL_SYSTEM_PROMPT` | The bot's behavior, tools, and constraints (the "voice"). Multi-line. |
-| `XIAOMI_MIMO_API_KEY` | MiMo Token Plan / Orbit key — see [§5.2](#52-get-a-key). |
-| `OPENROUTER_API_KEY` | Fallback model key — see [Part 4](#part-4-openrouter-api-setup). |
+| `XIAOMI_MIMO_API_KEY` | MiMo Token Plan / Orbit key — see [§5.2](#52-get-a-key). **Replace with whichever provider key your gateway is configured for** — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, etc. ([§3.14](#314-llm-provider-reference)). |
+| `OPENROUTER_API_KEY` | Fallback model key — see [Part 4](#part-4-openrouter-api-setup). Drop this line if you're not using OpenRouter as the fallback. |
 | `OBSIDIAN_VAULT_PATH` | Absolute path to your vault — see [Part 6](#part-6-add-an-obsidian-second-brain). Same path in every gateway's `.env` (that's how cross-bot durable knowledge works). |
 
 > *Why `chmod 600`:* Hermes refuses to load `.env` files that are world-readable. Your bot token is the password to your bot — locking it to your user only is non-negotiable.
@@ -818,6 +819,8 @@ done
 ```
 
 Tweak `model.default` per gateway if you want different model tiers per voice (e.g. `mimo-v2.5-pro` for technical bots, `mimo-v2-flash` for casual ones). The `auxiliary:` block routes compression and title-generation to a model — set this or you'll get the "No auxiliary LLM provider configured" warning and lose middle context on long conversations.
+
+> _Different provider per gateway?_ Totally fine — `config.yaml` is per-gateway, so the work bot can run on `anthropic` and the personal bot on `xiaomi-mimo` while sharing memories. Full provider list and the manual swap recipe live in [§3.14 LLM Provider Reference](#314-llm-provider-reference). The bootstrap (`--provider`) sets this for you at install time.
 
 ### 3.5 The token injector — `inject_config.py`
 
@@ -996,8 +999,11 @@ The script auto-detects three modes.
 2. Number of gateways (default 2)
 3. Names (default `gateway-1`, `gateway-2`, …)
 4. Sharing strategy (1 = `isolated` [default], 2 = `shared-skills`, 3 = `shared-both`)
+5. **LLM provider** (1 = `xiaomi-mimo` [default], 2 = `openrouter`, 3 = `anthropic`, 4 = `openai`, 5 = `gemini`, 6 = `groq`, 7 = `deepseek`, 8 = `minimax`, 9 = `zai`, 10 = `ollama`, 11 = `custom`).
+6. **Default model** for that provider (picker shows hard-coded list — see [§3.14](#314-llm-provider-reference)).
+7. **Fallback provider** (default: `openrouter` unless primary is openrouter; pass `none` to skip).
 
-Then it builds the layout, installs `run.sh` and `inject_config.py`, and prints next-steps with the exact paths to edit.
+Then it builds the layout, installs `run.sh` and `inject_config.py`, and prints next-steps with the exact paths to edit. Both the per-gateway `config.yaml` and `.env` are generated for the chosen provider — keys, base URL, and model lines are all in sync.
 
 **Mode B — extend an existing setup.** If the scan finds a parent folder already shaped like a Hermes setup (has `run.sh` + `inject_config.py` + ≥1 gateway with `config.yaml`), you'll get:
 
@@ -1011,15 +1017,33 @@ The script auto-detects which strategy your existing parent uses (by checking wh
 **Mode C — non-interactive (scripted automation).** Flag-driven, no prompts:
 
 ```bash
-# Fresh: 3 isolated gateways
+# Fresh: 3 isolated gateways with default xiaomi-mimo + openrouter fallback
 ./bootstrap.sh --parent ~/gateways --count 3 --names alpha,beta,gamma \
     --strategy isolated --non-interactive
 
-# Add 2 gateways to an existing parent (strategy auto-detected)
+# Anthropic primary, OpenRouter fallback
+./bootstrap.sh --parent ~/agents --count 1 --names assistant \
+    --strategy isolated --provider anthropic --model claude-opus-4-7 \
+    --non-interactive
+
+# OpenAI primary, no fallback
+./bootstrap.sh --parent ~/bots --count 2 --names work,personal \
+    --strategy shared-both --provider openai --model gpt-4o \
+    --no-fallback --non-interactive
+
+# Local Ollama, no API keys
+./bootstrap.sh --parent ~/local --count 1 --names dev \
+    --provider ollama --model llama3.1:8b --no-fallback --non-interactive
+
+# Add 2 gateways to an existing parent (strategy + provider auto-inherited)
 ./bootstrap.sh --add --parent ~/gateways --names delta,epsilon --non-interactive
 ```
 
-Full flag list: `./bootstrap.sh --help`.
+Provider-related flags:
+`--provider <name>` · `--model <id>` · `--base-url <url>` · `--key-env <VAR>` ·
+`--fallback-provider <name|none>` · `--fallback-model <id>` · `--no-fallback`.
+
+Full flag list and the per-provider defaults: `./bootstrap.sh --help` or [§3.14](#314-llm-provider-reference).
 
 **Safety invariants** (locked behavior):
 
@@ -1190,6 +1214,150 @@ new - Begin a fresh session (resets context)
 ```
 
 Repeat for each gateway. Five minutes total. Skippable if you don't care about polish.
+
+### 3.14 LLM Provider Reference
+
+The default in this guide is **Xiaomi MiMo primary + OpenRouter fallback** (cheap, fast, the math works). But Hermes is BYOM — bring your own model. Anthropic, OpenAI, Gemini, Groq, DeepSeek, MiniMax, Z.AI, local Ollama, or anything OpenAI-compatible all work the same way: edit two files (`config.yaml` + `.env`).
+
+`bootstrap.sh` accepts a `--provider` flag and prompts for one when interactive — see [§3.9](#39-one-command-bootstrap-bootstrapsh). The default stays `xiaomi-mimo` so existing setups in this repo are unchanged.
+
+#### Supported providers (hard-coded model lists)
+
+The script ships with these providers wired up. Model lists are accurate as of the script's commit date — providers add and deprecate models constantly, so hit the provider's `/v1/models` endpoint for the live list and edit `config.yaml` if you need a model that isn't in the picker.
+
+| Provider | Models bundled in bootstrap | Base URL | Env var |
+|---|---|---|---|
+| **xiaomi-mimo** *(default)* | `mimo-v2.5-pro`, `mimo-v2-flash` | `https://token-plan-{sgp,ams,cn}.xiaomimimo.com/v1` | `XIAOMI_MIMO_API_KEY` |
+| **openrouter** | `anthropic/claude-sonnet-4`, `anthropic/claude-opus-4`, `openai/gpt-4o`, `google/gemini-2.5-pro`, `meta-llama/llama-3.3-70b-instruct` | *(built-in)* | `OPENROUTER_API_KEY` |
+| **anthropic** | `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5` | *(built-in)* | `ANTHROPIC_API_KEY` |
+| **openai** | `gpt-4o`, `gpt-4o-mini`, `o1`, `o3-mini` | *(built-in)* | `OPENAI_API_KEY` |
+| **gemini** | `gemini-2.5-pro`, `gemini-2.5-flash` | *(built-in)* | `GEMINI_API_KEY` |
+| **groq** | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`, `llama-3.1-8b-instant` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |
+| **deepseek** | `deepseek-chat`, `deepseek-reasoner` | `https://api.deepseek.com/v1` | `DEEPSEEK_API_KEY` |
+| **minimax** | `minimax-m2.7` | `https://api.minimax.chat/v1` | `MINIMAX_API_KEY` |
+| **zai** | `glm-4-plus`, `glm-4-flash` | `https://open.bigmodel.cn/api/paas/v4` | `ZAI_API_KEY` |
+| **ollama** *(local)* | `llama3.1:8b`, `qwen2.5:14b`, `deepseek-r1:14b`, `mistral:7b` | `http://localhost:11434/v1` | *(none)* |
+| **custom** | you supply | you supply | you supply |
+
+**Built-in vs custom:** "built-in" providers go directly under `model.provider:` (no `custom_providers:` entry needed). The rest are OpenAI-compatible endpoints declared under `custom_providers:` with a `name`, `base_url`, and `key_env`.
+
+#### Switching at install time (bootstrap)
+
+```bash
+# Anthropic primary, OpenRouter fallback (default fallback)
+./bootstrap.sh --parent ~/gateways --count 1 --names assistant \
+    --strategy isolated --provider anthropic --model claude-opus-4-7 \
+    --non-interactive
+
+# OpenAI primary, no fallback
+./bootstrap.sh --parent ~/bots --count 2 --names work,personal \
+    --strategy shared-both --provider openai --model gpt-4o \
+    --no-fallback --non-interactive
+
+# Local Ollama, no API keys at all
+./bootstrap.sh --parent ~/local --count 1 --names dev \
+    --provider ollama --model llama3.1:8b --no-fallback --non-interactive
+
+# Custom OpenAI-compatible endpoint
+./bootstrap.sh --parent ~/gateways --count 1 --names myagent \
+    --provider custom --model my-llm-v1 \
+    --base-url https://api.example.com/v1 --key-env EXAMPLE_API_KEY \
+    --no-fallback --non-interactive
+```
+
+Run `bootstrap.sh --help` for the full flag list and per-provider defaults.
+
+#### Switching manually (already-running setup)
+
+If a gateway already exists, bootstrap won't touch its `.env` or `config.yaml` (per the safety invariants). Edit them by hand. Two files per gateway, four edits total.
+
+**Step 1 — `<gateway>/config.yaml`:** swap the `model` block (and the matching `auxiliary` block — the compression model should match the primary's context window).
+
+*Built-in provider (anthropic, openai, gemini, openrouter):*
+
+```yaml
+model:
+  default: claude-sonnet-4-6
+  provider: anthropic                  # bare name = built-in
+  api_mode: chat_completions
+  fallback_providers:
+    - provider: openrouter
+      model: anthropic/claude-sonnet-4
+
+custom_providers: []                    # empty when both primary + fallback are built-in
+
+providers:
+  anthropic:
+    key_env: ANTHROPIC_API_KEY          # default name; override here if you use a different env var
+
+auxiliary:
+  compression:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  title_generation:
+    provider: anthropic
+    model: claude-sonnet-4-6
+```
+
+*Custom OpenAI-compatible (groq, deepseek, ollama, minimax, zai, anything else):*
+
+```yaml
+model:
+  default: llama-3.3-70b-versatile
+  provider: custom:groq                 # `custom:<name>` references custom_providers below
+  api_mode: chat_completions
+  fallback_providers:
+    - provider: openrouter
+      model: meta-llama/llama-3.3-70b-instruct
+
+custom_providers:
+  - name: groq
+    base_url: https://api.groq.com/openai/v1
+    key_env: GROQ_API_KEY
+
+providers: {}
+
+auxiliary:
+  compression:
+    provider: custom:groq
+    model: llama-3.3-70b-versatile
+  title_generation:
+    provider: custom:groq
+    model: llama-3.3-70b-versatile
+```
+
+**Step 2 — `<gateway>/.env`:** drop the old API key var, add the new one.
+
+```diff
+- XIAOMI_MIMO_API_KEY=tp-...
++ ANTHROPIC_API_KEY=sk-ant-api03-...
+  OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+(Keep `OPENROUTER_API_KEY` only if you're using openrouter as the fallback. Otherwise remove that line too.)
+
+**Step 3 — restart:** `cd ~/gateways && ./run.sh stop && ./run.sh all`. The launcher re-reads `.env`, `inject_config.py` re-injects the bot token, and Hermes picks up the new model on first message.
+
+#### Where to find the latest model IDs
+
+- **Live `/v1/models` endpoint** (works for any OpenAI-compatible provider):
+  ```bash
+  curl -s "$BASE_URL/models" -H "Authorization: Bearer $API_KEY" | jq '.data[].id'
+  ```
+- **Anthropic:** [docs.anthropic.com/en/docs/about-claude/models/overview](https://docs.anthropic.com/en/docs/about-claude/models/overview)
+- **OpenAI:** [platform.openai.com/docs/models](https://platform.openai.com/docs/models)
+- **Gemini:** [ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models)
+- **OpenRouter:** [openrouter.ai/models](https://openrouter.ai/models)
+- **MiMo:** [platform.xiaomimimo.com](https://platform.xiaomimimo.com/)
+- **Groq:** [console.groq.com/docs/models](https://console.groq.com/docs/models)
+- **DeepSeek:** [api-docs.deepseek.com](https://api-docs.deepseek.com/)
+- **Ollama (local):** `ollama list` for installed models, [ollama.com/library](https://ollama.com/library) for the catalog.
+
+#### Hermes upstream provider list
+
+Hermes Agent itself supports more than what bootstrap wires up out of the box. Check `hermes config providers --help` (CLI) or the upstream docs at [hermes-agent.nousresearch.com](https://hermes-agent.nousresearch.com/) for the canonical list. The upstream BYOM tagline mentions: OpenRouter, Anthropic, OpenAI, Xiaomi MiMo, Z.AI, MiniMax, Google Gemini, Groq, DeepSeek, and local models via Ollama. Anything beyond that list works through `custom_providers:` if it's OpenAI-compatible — same shape as the recipe above.
+
+> _Why hard-coded model lists?_ Auto-fetching live model lists from every provider would mean a network hit for every bootstrap run, plus a separate auth flow per provider just to discover IDs. Cheaper and more reliable to ship a list, document where the live list lives, and let the user paste the latest model name. Update the list in [`bootstrap.sh`](./bootstrap.sh)'s `provider_models()` function when models change materially.
 
 
 ---
