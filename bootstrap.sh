@@ -26,7 +26,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Bump on every meaningful change so users running `curl ... | bash` can see
 # whether their copy matches the latest.
-BOOTSTRAP_VERSION="0.2.0"
+BOOTSTRAP_VERSION="0.3.0"
 BOOTSTRAP_RELEASED="2026-05-08"
 
 # -----------------------------------------------------------------------------
@@ -285,6 +285,39 @@ confirm() {
     fi
     read_tty "$msg [$default]: "
     echo "${REPLY:-$default}"
+}
+
+# yes_no — returns 0 for yes, 1 for no. Default Y shows `[Y/n]`,
+# default N shows `[y/N]`. Empty input = default.
+yes_no() {
+    local msg="$1" default="${2:-Y}"
+    local label
+    case "$default" in
+        Y|y) label="$msg [Y/n]: " ;;
+        N|n) label="$msg [y/N]: " ;;
+        *)   label="$msg [Y/n]: "; default="Y" ;;
+    esac
+    if [ "$NON_INTERACTIVE" = 1 ]; then
+        case "$default" in Y|y) return 0 ;; *) return 1 ;; esac
+    fi
+    read_tty "$label"
+    local reply="${REPLY:-$default}"
+    [[ "$reply" =~ ^[Yy] ]]
+}
+
+# Suggest a non-colliding parent path when the user wants a fresh setup
+# alongside an existing one. Picks $HOME/gateways-2, -3, … until free.
+suggest_fresh_parent() {
+    local existing="$1"
+    local base="$HOME/gateways"
+    [ "$existing" = "$base" ] || base="$HOME/gateways"
+    local i=2
+    local candidate="$base-$i"
+    while [ -e "$candidate" ]; do
+        i=$((i+1))
+        candidate="$base-$i"
+    done
+    echo "$candidate"
 }
 
 # -----------------------------------------------------------------------------
@@ -1234,25 +1267,40 @@ if [ ${#CANDIDATES[@]} -eq 0 ]; then
     mode_a_fresh
 elif [ ${#CANDIDATES[@]} -eq 1 ]; then
     log "found existing setup: ${CANDIDATES[0]}"
-    ans="$(confirm "Extend it?" "Y")"
-    if [[ "$ans" =~ ^[Yy] ]]; then
+    if yes_no "Extend it (add gateways into the same parent)?" "Y"; then
         PARENT="${CANDIDATES[0]}"
         mode_b_add "$PARENT"
     else
-        mode_a_fresh
+        log "leaving ${CANDIDATES[0]} untouched"
+        if yes_no "Create a separate, brand-new parent folder for a fresh setup?" "Y"; then
+            suggested="$(suggest_fresh_parent "${CANDIDATES[0]}")"
+            PARENT="$(prompt "New parent folder (must not exist or be empty)" "$suggested")"
+            if [ -e "$PARENT" ] && [ -n "$(ls -A "$PARENT" 2>/dev/null)" ]; then
+                die "$PARENT already exists and is not empty — pick a different path"
+            fi
+            mode_a_fresh
+        else
+            log "nothing to do — bye"
+            exit 0
+        fi
     fi
 else
     echo "found multiple candidates:"
     for i in "${!CANDIDATES[@]}"; do
         printf "  %d) %s\n" "$((i+1))" "${CANDIDATES[$i]}"
     done
-    echo "  $((${#CANDIDATES[@]}+1))) none of these — start fresh"
+    echo "  $((${#CANDIDATES[@]}+1))) none of these — fresh setup at a NEW parent folder"
     sel="$(prompt "Pick" "1")"
     [[ "$sel" =~ ^[0-9]+$ ]] || die "invalid selection"
     if [ "$sel" -le "${#CANDIDATES[@]}" ]; then
         PARENT="${CANDIDATES[$((sel-1))]}"
         mode_b_add "$PARENT"
     else
+        suggested="$(suggest_fresh_parent "${CANDIDATES[0]}")"
+        PARENT="$(prompt "New parent folder (must not exist or be empty)" "$suggested")"
+        if [ -e "$PARENT" ] && [ -n "$(ls -A "$PARENT" 2>/dev/null)" ]; then
+            die "$PARENT already exists and is not empty — pick a different path"
+        fi
         mode_a_fresh
     fi
 fi
