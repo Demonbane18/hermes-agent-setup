@@ -23,9 +23,20 @@ gateways/*/cron/
 # point of "compounding skills." Per-gateway in split-brain mode, symlinked
 # in full-share mode — git resolves both fine.
 
-# --- Shared handoff: keep README, ignore live notes --------------------------
-gateways/shared/handoff/*.md
-!gateways/shared/handoff/README.md
+# --- Shared handoff + canonical shared store --------------------------------
+# Keep README files and ignored handoff notes; ignore live shared memories
+# and any per-host shared sessions/.
+gateways/_shared/handoff/*.md
+!gateways/_shared/handoff/README.md
+gateways/_shared/memories/
+gateways/_shared/sessions/
+
+# --- Backup files left by bootstrap.sh when replacing run.sh / inject_config.py
+*.bak
+
+# --- Python bytecode caches from local lint/py_compile runs
+__pycache__/
+*.pyc
 
 # --- Diagram tooling ----------------------------------------------------------
 diagrams/node_modules/

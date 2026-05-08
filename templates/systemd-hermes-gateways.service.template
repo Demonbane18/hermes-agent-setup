@@ -1,0 +1,36 @@
+# =============================================================================
+# Hermes Multi-Gateway systemd unit
+# =============================================================================
+# Drop into /etc/systemd/system/hermes-gateways.service after substituting
+# the {{PARENT}} placeholder with the absolute parent-folder path on your VPS
+# (e.g. /root/gateways or /home/butte/agents).
+#
+# Bare-metal install:
+#   sed -i 's|{{PARENT}}|/root/gateways|g' hermes-gateways.service
+#   sudo cp hermes-gateways.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hermes-gateways.service
+#
+# Hostinger 1-click (Docker) variant: keep the unit on the HOST VM, change
+# ExecStart to wrap docker exec — see README §"Systemd unit (optional)".
+# =============================================================================
+
+[Unit]
+Description=Hermes Multi Telegram Gateways
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory={{PARENT}}
+ExecStart={{PARENT}}/run.sh all
+Restart=on-failure
+RestartSec=5
+
+# Optional: per-bot logs via templated unit.
+# Drop a second file at /etc/systemd/system/hermes-gateway@.service with
+#   ExecStart={{PARENT}}/run.sh %i
+# then `systemctl enable --now hermes-gateway@work hermes-gateway@personal`.
+
+[Install]
+WantedBy=multi-user.target

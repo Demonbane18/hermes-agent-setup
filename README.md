@@ -10,7 +10,7 @@
 [![Telegram](https://img.shields.io/badge/chat-Telegram-26A5E4)](https://t.me/BotFather)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[**Quickstart**](#quickstart-tldr) · [**Why this repo**](#why-this-guide-exists) · [**Step-by-step**](#part-1-spin-up-the-vps-with-hostingers-one-click-install) · [**Add Nth bot**](#310-adding-a-third-or-fourth-or-nth-bot) · [**Architecture**](#architecture-diagrams) · [**Troubleshooting**](#troubleshooting)
+[**Quickstart**](#quickstart-tldr) · [**Why this repo**](#why-this-guide-exists) · [**Step-by-step**](#part-1-spin-up-the-vps-with-hostingers-one-click-install) · [**Add Nth bot**](#311-adding-a-new-gateway-later) · [**Architecture**](#architecture-diagrams) · [**Troubleshooting**](#troubleshooting)
 
 </div>
 
@@ -30,7 +30,7 @@
 - [Why this guide exists](#why-this-guide-exists)
 - [What is Hermes Agent?](#what-is-hermes-agent)
 - [Hermes Agent vs. OpenClaw — why this guide picked Hermes](#hermes-agent-vs-openclaw--why-this-guide-picked-hermes)
-- [Profiles vs. Dual Gateway — what's different here](#profiles-vs-dual-gateway--whats-different-here)
+- [Profiles vs. Multi-Gateway — four ways to share (or not)](#profiles-vs-multi-gateway--four-ways-to-share-or-not)
 - [Why one container, many gateways (and not N Docker containers)](#why-one-container-many-gateways-and-not-n-docker-containers)
 - [Prerequisites & Costs](#prerequisites--costs)
 - [How it works (visual primer for first-timers)](#how-it-works-visual-primer-for-first-timers)
@@ -41,10 +41,16 @@
   - [Plain-English glossary of the rest](#plain-english-glossary-of-the-rest)
 - [Part 1: Spin up the VPS with Hostinger's One-Click Install](#part-1-spin-up-the-vps-with-hostingers-one-click-install)
 - [Part 2: Connect Your First Telegram Bot](#part-2-connect-your-first-telegram-bot)
-- [Part 3: The Multi-Gateway Pattern (the magic)](#part-3-the-multi-gateway-pattern-the-magic)
-  - [3.10 Adding a third (or fourth, or Nth) bot](#310-adding-a-third-or-fourth-or-nth-bot)
-  - [3.11 Choosing your pattern: full-share vs split-brain](#311-choosing-your-pattern-full-share-vs-split-brain)
-  - [3.12 Cross-gateway handoff (`shared/handoff/`)](#312-cross-gateway-handoff-sharedhandoff)
+- [Part 3: Multi-Gateway Setup — Flexible N-Gateway Pattern](#part-3-multi-gateway-setup--flexible-n-gateway-pattern)
+  - [3.1 Choose your shape](#31-choose-your-shape)
+  - [3.2 Lay out the directory](#32-lay-out-the-directory)
+  - [3.5 The token injector — `inject_config.py`](#35-the-token-injector--inject_configpy)
+  - [3.6 The launcher — `run.sh`](#36-the-launcher--runsh)
+  - [3.8 systemd (optional)](#38-systemd-optional-but-recommended-for-production)
+  - [3.9 One-command bootstrap (`bootstrap.sh`)](#39-one-command-bootstrap-bootstrapsh)
+  - [3.10 Sharing strategies — reference deep-dive](#310-sharing-strategies--reference-deep-dive)
+  - [3.11 Adding a new gateway later](#311-adding-a-new-gateway-later)
+  - [3.12 Cross-gateway handoff (`_shared/handoff/`)](#312-cross-gateway-handoff-_sharedhandoff)
   - [3.13 Set bot commands in @BotFather](#313-set-bot-commands-in-botfather-small-qol-win)
 - [Part 4: OpenRouter API Setup](#part-4-openrouter-api-setup)
 - [Part 5: Xiaomi MiMo (free / cheap inference)](#part-5-xiaomi-mimo-free--cheap-inference)
@@ -68,31 +74,29 @@ For people who already know the shape of all this. Beginners — skip this and s
 # 2. SSH into the host VM
 ssh root@<vps-ip>
 
-# 3. Drop into the Hermes container
+# 3. Drop into the Hermes container (skip if bare-metal)
 docker exec -it hermes-agent bash
 
-# 4. Pick your bot names — the FIRST one is the "primary" (owns the real brain),
-# every other one symlinks into it.
-PRIMARY=work
-EXTRA_BOTS=(personal coach finance)        # add as many as you want
+# 4. One-command bootstrap — prompts for parent, names, count, strategy
+curl -fsSL https://raw.githubusercontent.com/Demonbane18/hermes-agent-setup/main/bootstrap.sh | bash
 
-# 5. Set up the gateway scaffolds (inside the container)
-for gw in "$PRIMARY" "${EXTRA_BOTS[@]}"; do
-  mkdir -p ~/gateways/"$gw" && cd ~/gateways/"$gw" && hermes setup
-done
+# Or non-interactive (3 isolated gateways):
+curl -fsSL .../bootstrap.sh | bash -s -- \
+    --parent ~/gateways --count 3 --names work,personal,coach \
+    --strategy isolated --non-interactive
 
-# 6. Symlink the shared brain into every extra gateway
-for gw in "${EXTRA_BOTS[@]}"; do
-  rm -rf ~/gateways/"$gw"/{memories,skills}
-  ln -s ~/gateways/"$PRIMARY"/memories ~/gateways/"$gw"/memories
-  ln -s ~/gateways/"$PRIMARY"/skills   ~/gateways/"$gw"/skills
-done
+# 5. Edit each gateway's .env with its real BotFather token + API keys
+$EDITOR ~/gateways/work/.env
+$EDITOR ~/gateways/personal/.env
+# ...
 
-# 7. Drop in run.sh + inject_config.py + per-gateway .env (this repo provides them)
-cd ~/gateways && chmod +x run.sh && ./run.sh all
+# 6. Launch every discovered gateway
+cd ~/gateways && ./run.sh all
 ```
 
-N bots. One shared brain. Persistent Docker volume keeps it safe across restarts. Done.
+N bots. Three sharing strategies (`isolated` default, `shared-skills`, `shared-both`). Persistent Docker volume keeps it safe across restarts. Done.
+
+> **Strategies in one line:** `isolated` = each bot has its own memories + skills. `shared-skills` = own memories, shared skill library. `shared-both` = one shared brain, N voices ([§3.10](#310-sharing-strategies--reference-deep-dive)).
 
 ---
 
@@ -170,27 +174,29 @@ Straight from [hermes-agent.nousresearch.com](https://hermes-agent.nousresearch.
 
 ---
 
-## Profiles vs. Multi-Gateway — three ways to share (or not)
+## Profiles vs. Multi-Gateway — four ways to share (or not)
 
-There are **three patterns** for running multiple Hermes bots. This guide focuses on the multi-gateway ones (full-share and split-brain) because profiles are well-documented upstream. Pick the row that matches your situation:
+There are **four patterns** for running multiple Hermes bots. The first one is upstream's profile system; the other three are the multi-gateway sharing strategies this guide ships in `bootstrap.sh`. Pick the row that matches your situation:
 
-|                      | **Profiles** (official)             | **Full-Share Multi-Gateway**           | **Split-Brain Multi-Gateway**                          |
-| -------------------- | ----------------------------------- | -------------------------------------- | ------------------------------------------------------ |
-| Memory (`memories/`) | Isolated per profile                | **Shared** (symlinked)                 | **Isolated** per bot                                   |
-| Skills (`skills/`)   | Isolated per profile                | **Shared** (symlinked)                 | **Shared** (symlinked)                                 |
-| Sessions             | Isolated per profile                | Isolated per bot                       | Isolated per bot                                       |
-| Obsidian vault       | n/a                                 | **Shared**                             | **Shared** (the durable layer)                         |
-| System prompt        | Same default                        | Different per bot                      | Different per bot                                      |
-| Bot tokens           | One per profile                     | One per bot                            | One per bot                                            |
-| Cross-bot recall     | None                                | **Yes — automatic**                    | Only via Obsidian (deliberate)                         |
-| Leak risk            | None                                | Personal facts can surface in work bot | Low — facts only flow when you write them to the vault |
-| Best for             | Strict tenant isolation, compliance | One head, many voices, leakage is fine | One head, many voices, **leakage is NOT fine**         |
+|                      | **Profiles** (official upstream)     | **Multi-Gateway: `isolated`** (default)         | **Multi-Gateway: `shared-skills`**                     | **Multi-Gateway: `shared-both`**       |
+| -------------------- | ------------------------------------ | ----------------------------------------------- | ------------------------------------------------------ | -------------------------------------- |
+| Memory (`memories/`) | Isolated per profile                 | **Isolated** per bot                            | **Isolated** per bot                                   | **Shared** (`_shared/memories/`)       |
+| Skills (`skills/`)   | Isolated per profile                 | **Isolated** per bot                            | **Shared** (`_shared/skills/`)                         | **Shared** (`_shared/skills/`)         |
+| Sessions             | Isolated per profile                 | Isolated per bot                                | Isolated per bot                                       | Isolated per bot                       |
+| Obsidian vault       | n/a                                  | **Shared** (the durable layer)                  | **Shared** (the durable layer)                         | **Shared**                             |
+| System prompt        | Same default                         | Different per bot                               | Different per bot                                      | Different per bot                      |
+| Bot tokens           | One per profile                      | One per bot                                     | One per bot                                            | One per bot                            |
+| Cross-bot recall     | None                                 | Only via Obsidian (deliberate)                  | Only via Obsidian + skills (deliberate-ish)            | **Yes — automatic**                    |
+| Leak risk            | None                                 | None — pure isolation                           | Low — facts cross over only via the vault              | Personal facts can surface anywhere    |
+| Process isolation    | **Separate Hermes processes**        | Shared Hermes runtime                           | Shared Hermes runtime                                  | Shared Hermes runtime                  |
+| Best for             | Strict tenant isolation, compliance  | Distinct personas, max separation               | One skill library, separate memory streams             | One head, many voices                  |
 
 > **Rule of thumb:**
 >
-> - Freelancer juggling clients who must never see each other's data → **profiles**.
-> - One builder, casual home + work, doesn't mind a personal fact occasionally surfacing in the work bot → **full-share** (the default in this guide).
-> - One builder who has things the work bot should genuinely never repeat (medical, family, finances) → **split-brain** ([§3.11](#311-choosing-your-pattern-full-share-vs-split-brain)). Skills still compound across all bots; only deliberate, vault-stored knowledge crosses over.
+> - Freelancer juggling clients who must never see each other's data, or compliance boundary required → **profiles**. Upstream-supported, fully separate everything.
+> - You want each bot to remember only its own conversations and write to a shared Obsidian vault for anything durable → **`isolated`** (the new default).
+> - You're maintaining one skill library that every bot should benefit from, but you want each bot's `MEMORY.md` to stay tight and on-topic → **`shared-skills`**.
+> - All your bots are personas of the same you (work + life + coach) and "what did I tell the work bot yesterday?" should just work from the personal bot → **`shared-both`** (the historical default).
 
 ---
 
@@ -209,7 +215,7 @@ Every concern stacks the same direction:
 | **Hostinger upgrade path**     | The 1-click template manages exactly one container (`hermes-agent`). Restart, upgrade, rollback — already wired up.                                     | Hostinger's template doesn't know about your extra containers. Their upgrades touch only the one they shipped. You inherit lifecycle for the rest — base image bumps, Python version drift, MCP version drift, all of it. |
 | **MCP servers & model client** | One set of MCP processes, one OpenRouter/MiMo client pool, one cron daemon. Shared across every gateway.                                                | Every container starts its own MCP stack and opens its own model connections. Multiplied API session count, multiplied warm-up time, multiplied debug surface when something misbehaves.                       |
 | **Cron / scheduled skills**    | One crontab. A single 6 AM "morning brief" task can read memories the work bot wrote yesterday and DM the personal bot the result.                      | Cron lives where? Pick a container. Now that container needs read access to the others' state, which means more bind mounts, which means we're back to the corruption problem in row 1.                        |
-| **Cross-bot handoff**          | Drop a file into `~/gateways/shared/handoff/` ([§3.12](#312-cross-gateway-handoff-sharedhandoff)) — every gateway sees it instantly, same filesystem.    | Requires a shared bind mount plus filesystem-event coordination across container boundaries. Doable, fragile, and you'll debug it at 11 PM the first time inotify drops an event.                               |
+| **Cross-bot handoff**          | Drop a file into `~/gateways/_shared/handoff/` ([§3.12](#312-cross-gateway-handoff-_sharedhandoff)) — every gateway sees it instantly, same filesystem.    | Requires a shared bind mount plus filesystem-event coordination across container boundaries. Doable, fragile, and you'll debug it at 11 PM the first time inotify drops an event.                               |
 | **Operational surface**        | One `run.sh`, one log stream, one `tmux`/systemd unit. Adding a fifth bot is one more folder + symlinks + 60 seconds.                                   | N `docker-compose` services (or N `docker run` invocations), N log streams, N restart policies, N env files to keep in sync. Adding a fifth bot is a config change everywhere.                                  |
 | **Backups**                    | `docker cp hermes-agent:/<volume>/skills ./skills-backup` and you have everything. One volume to snapshot.                                              | N volumes, possibly across N containers, each with partial state. You can do it; you just have to remember which container owns which authoritative copy.                                                       |
 
@@ -289,7 +295,7 @@ The same idea as a diagram:
 
 | Folder                | Symlinked?                                                                                        | Why                                                                             |
 | --------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `memories/`           | Yes in full-share mode, no in [split-brain](#311-choosing-your-pattern-full-share-vs-split-brain) | "Did I tell the work bot about X?" should also work from the personal bot.      |
+| `memories/`           | Yes in [`shared-both`](#310-sharing-strategies--reference-deep-dive) strategy; no in `isolated` or `shared-skills` | "Did I tell the work bot about X?" should also work from the personal bot.      |
 | `skills/`             | Yes — **always**                                                                                  | A recipe written by one bot is procedural knowledge — every bot should benefit. |
 | `sessions/`           | No, never                                                                                         | Conversations stay private to the bot they happened in.                         |
 | `config.yaml`, `.env` | No, never                                                                                         | Each bot needs its own bot token, system prompt, and personality settings.      |
@@ -323,7 +329,7 @@ If you used the Hostinger 1-click ([Part 1](#part-1-spin-up-the-vps-with-hosting
 
 ### What happens when you send a Telegram message
 
-Useful to see end-to-end the first time. This is the work bot, full-share mode, MiMo as the primary model:
+Useful to see end-to-end the first time. This is the work bot, `shared-both` strategy, MiMo as the primary model:
 
 ![End-to-end Telegram message flow through Hermes to the model and back](./images/diagrams/03-message-flow.svg)
 
@@ -337,7 +343,7 @@ Hermes has more than one place it remembers things, and they behave differently.
 
 | Type               | What it is                                                                                                                     | Lifetime                                       | Sharing pattern in this guide                                          |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------------- |
-| **memories/**      | A markdown file (`MEMORY.md`) the agent appends to whenever something seems worth remembering. Mostly automatic, mostly noisy. | Until you delete it                            | **Shared** in full-share mode · **Isolated** in split-brain mode       |
+| **memories/**      | A markdown file (`MEMORY.md`) the agent appends to whenever something seems worth remembering. Mostly automatic, mostly noisy. | Until you delete it                            | **Shared** in `shared-both` · **Isolated** in `isolated` and `shared-skills`       |
 | **skills/**        | Markdown recipes the agent writes after solving a problem. Procedural ("how to deploy n8n"), not personal.                     | Until you delete it                            | **Always shared** via symlink — the one folder every bot benefits from |
 | **sessions/**      | A SQLite database with full conversation transcripts. Searchable, replayable, big.                                             | Until you delete it                            | **Never shared** — your conversations stay where they happened         |
 | **Obsidian vault** | A folder of `.md` files **you** also see in Obsidian on your laptop. The canon — what you've decided is durable.               | Until you delete it (and you can `git revert`) | **Shared via path** — one `OBSIDIAN_VAULT_PATH` in every `.env`        |
@@ -529,6 +535,19 @@ Before doing the multi-gateway dance, get **one** bot working end-to-end. If one
 
 > **Container note:** From here on, all `hermes …` commands run **inside** the Hermes container. If you're using the Hostinger 1-click, drop in with `docker exec -it hermes-agent bash` (or your `hermes-shell` alias from [§1.5](#15-enter-the-container)) before running anything in this section. Bare-metal users can ignore this — your shell is already in the right place.
 
+### 2.0 Prerequisites checklist
+
+Before §2.1, confirm you have:
+
+- [x] **A VPS with root or sudo access.** Hostinger 1-click ([Part 1](#part-1-spin-up-the-vps-with-hostingers-one-click-install)) or any Ubuntu/Debian box.
+- [x] **The `hermes` CLI installed.** `hermes --version` should print a version. Bare-metal one-liner if it isn't:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+  ```
+- [x] **Python 3.10+ with PyYAML.** `python3 -c "import yaml"` should exit 0. If not: `pip3 install pyyaml` (or your distro's `python3-yaml` package).
+- [x] **At least one Telegram bot token per gateway** you'll be running. You'll create them in §2.1 and §3.3.
+- [x] **One LLM API key.** Default is Xiaomi MiMo (free tokens — see [Part 5](#part-5-xiaomi-mimo-free--cheap-inference)). OpenRouter as fallback ([Part 4](#part-4-openrouter-api-setup)). Swap to any provider Hermes supports.
+
 ### 2.1 Create a bot in Telegram
 
 1. Open Telegram and start a chat with [**@BotFather**](https://t.me/BotFather).
@@ -591,11 +610,23 @@ You now have **one** working bot. If this is all you wanted, you can stop here. 
 
 ---
 
-## Part 3: The Multi-Gateway Pattern (the magic)
+## Part 3: Multi-Gateway Setup — Flexible N-Gateway Pattern
 
-This is the section that makes this guide different from every other Hermes tutorial. **Two — or three, or five — Telegram bots, distinct personalities, one shared brain.**
+This is the section that makes this guide different from every other Hermes tutorial. **N Telegram bots — one, two, twenty — each with its own voice, one universal launcher, and three picks for how much they share.**
 
-The pattern below uses **two bots (work + personal)** as the worked example because that's the most common setup. Once it works, [§3.10](#310-adding-a-third-or-fourth-or-nth-bot) shows you how to add more bots in 60 seconds each. The same trick scales to N voices.
+Pick the parent folder name (`~/gateways`, `~/agents`, `~/hermes-bots`). Pick the gateway names (`work`, `personal`, `client-acme`, `home-automation` — anything alphanumeric). Pick the **sharing strategy**:
+
+|  | `isolated` | `shared-skills` | `shared-both` |
+|---|---|---|---|
+| `memories/` | per-gateway | per-gateway | shared via `_shared/memories/` |
+| `skills/` | per-gateway | shared via `_shared/skills/` | shared via `_shared/skills/` |
+| Best for | Distinct personas, max separation | One skill library, separate memory streams | One brain, many voices |
+| Default? | ✅ | | (was the historical default) |
+
+Two ways to do everything in this Part:
+
+- **Manual** (§3.1–3.8) — read the steps, run the commands, understand each piece. Use this the first time.
+- **Bootstrap** (§3.9) — `bootstrap.sh` does §3.1–3.8 for you in one command, with prompts for the choices above.
 
 > **Container note (Hostinger 1-click users):** every command in this part runs **inside** the Hermes container. Drop in with `docker exec -it hermes-agent bash` first. The `~/gateways/` path used throughout sits inside the container's persistent Docker volume, so everything you create here survives container restarts and template upgrades. Confirm your `~` is on the persistent mount with `df -h ~` — the device should match the volume `Destination` you saw in [§1.4](#14-find-the-persistent-volume-this-is-where-your-data-lives). If `~` isn't on the volume, replace `~/gateways/` with the actual mount path (e.g. `/data/gateways/`) everywhere below.
 
@@ -607,185 +638,319 @@ The pattern below uses **two bots (work + personal)** as the worked example beca
 >
 > Confirm with `hermes --version`. Full bare-metal walkthrough (deps, manual clone, alternate paths) is in [§Manual install fallback](#manual-install-fallback). The rest of Part 3 then runs on your normal host shell — every "inside the container" instruction collapses to "on the host."
 
-### 3.1 The directory layout
+### 3.1 Choose your shape
 
-All gateways live under `~/gateways/`. **Pick one as the "primary"** — it owns the real `memories/` and `skills/` folders. Every other gateway symlinks into the primary. Throughout the rest of this guide the primary is `work` and the second bot is `personal`, but the names are yours to pick.
+Decide four things up front. The bootstrap script (§3.9) prompts for these; if you're doing it manually, write them down now:
+
+| Choice | Default | Examples |
+|---|---|---|
+| **Parent folder** | `~/gateways` | `~/agents`, `~/hermes-bots`, `/opt/hermes` |
+| **Gateway count** | 2 | 1, 3, 20 |
+| **Gateway names** | `gateway-1`, `gateway-2`, … | `work`, `personal`, `client-acme`, `home-automation` |
+| **Sharing strategy** | `isolated` | `shared-skills`, `shared-both` |
+
+Name rules: alphanumeric + `-`/`_`, no leading dot or underscore. The leading-underscore rule matters because `<parent>/_shared/` is reserved for canonical shared dirs (memories + skills + handoff) and the launcher silently skips any sibling whose name starts with `_`.
+
+For the rest of this Part the worked example is **`~/gateways/work` + `~/gateways/personal`**, no shared dirs (`isolated` strategy). Substitute your own values if you picked different ones.
+
+### 3.2 Lay out the directory
+
+The shape depends on the strategy you picked.
+
+**Strategy: `isolated` (default)**
 
 ```
 ~/gateways/
-├── run.sh                  # launcher script (this repo)
-├── inject_config.py        # injects bot token at startup (this repo)
-├── .env.example            # template (this repo)
-│
-├── work/                   # PRIMARY gateway — owns the real brain
+├── run.sh                  # universal launcher (templates/run.sh.template)
+├── inject_config.py        # universal token injector
+├── work/
+│   ├── .env                # work bot token + system prompt
 │   ├── config.yaml
-│   ├── .env                # work bot token + work system prompt
-│   ├── memories/  ◄─── canonical (real folder)
-│   ├── skills/    ◄─── canonical (real folder)
-│   └── sessions/           (work-only sessions)
-│
-├── personal/               # SECONDARY gateway
-│   ├── config.yaml
-│   ├── .env                # personal bot token + personal system prompt
-│   ├── memories/  ──►  symlink → work/memories
-│   ├── skills/    ──►  symlink → work/skills
-│   └── sessions/           (personal-only sessions)
-│
-└── coach/                  # (optional) THIRD gateway, same pattern
+│   ├── memories/           (real folder)
+│   ├── skills/             (real folder)
+│   └── sessions/
+└── personal/
+    ├── .env                # personal bot token + system prompt
     ├── config.yaml
-    ├── .env
-    ├── memories/  ──►  symlink → work/memories
-    ├── skills/    ──►  symlink → work/skills
+    ├── memories/           (real folder, separate from work's)
+    ├── skills/             (real folder, separate from work's)
     └── sessions/
 ```
 
-**The trick is the symlinks.** Each non-primary gateway's `memories/` and `skills/` are not real folders — they're Linux symbolic links pointing back to the primary. Every Hermes process therefore reads and writes the same underlying files. Sessions stay separate (your conversations don't bleed across bots), but knowledge and skills are shared. **One head, many voices.**
+**Strategy: `shared-skills`**
 
-### 3.2 Create the structure
-
-Stop the single bot first:
-```bash
-hermes gateway stop
 ```
-If the gateway still won't disconnect:
-```bash
-systemctl stop hermes-gateway.service 2>/dev/null || true
-pkill -f "hermes gateway" || true
+~/gateways/
+├── run.sh
+├── inject_config.py
+├── _shared/
+│   ├── skills/             ◄─── canonical (real folder)
+│   └── handoff/            (cross-gateway handoff, see §3.12)
+├── work/
+│   ├── .env
+│   ├── config.yaml
+│   ├── memories/           (real folder, work-only)
+│   ├── skills/    ──►      symlink → _shared/skills
+│   └── sessions/
+└── personal/
+    ├── .env
+    ├── config.yaml
+    ├── memories/           (real folder, personal-only)
+    ├── skills/    ──►      symlink → _shared/skills
+    └── sessions/
 ```
 
-Pick your gateway names. The **first** one is the primary (owns the real brain); every other one symlinks into it. You can add or remove names freely — same exact pattern.
+**Strategy: `shared-both`**
 
-```bash
-PRIMARY=work
-EXTRAS=(personal)              # add more later, e.g.: (personal coach finance)
+```
+~/gateways/
+├── run.sh
+├── inject_config.py
+├── _shared/
+│   ├── memories/           ◄─── canonical (real folder)
+│   ├── skills/             ◄─── canonical (real folder)
+│   └── handoff/
+├── work/
+│   ├── .env
+│   ├── config.yaml
+│   ├── memories/  ──►      symlink → _shared/memories
+│   ├── skills/    ──►      symlink → _shared/skills
+│   └── sessions/
+└── personal/
+    ├── .env
+    ├── config.yaml
+    ├── memories/  ──►      symlink → _shared/memories
+    ├── skills/    ──►      symlink → _shared/skills
+    └── sessions/
 ```
 
-Now build the layout:
+Build it. Stop the single bot first if you have one running:
 
 ```bash
-for gw in "$PRIMARY" "${EXTRAS[@]}"; do
-  mkdir -p ~/gateways/"$gw"
-  cd ~/gateways/"$gw"
-  hermes setup
+hermes gateway stop 2>/dev/null || pkill -f "hermes gateway run" || true
+```
+
+> *What this does:* tries the polite shutdown first, falls back to `pkill` so an old gateway isn't holding your token when you launch the new fleet.
+
+```bash
+PARENT=~/gateways
+GATEWAYS=(work personal)                # your names
+STRATEGY=isolated                       # or shared-skills / shared-both
+
+mkdir -p "$PARENT"
+cd "$PARENT"
+
+# 1) Shared dirs (only for non-isolated strategies)
+if [ "$STRATEGY" != "isolated" ]; then
+  mkdir -p _shared/handoff
+  [ "$STRATEGY" = "shared-both" ] && mkdir -p _shared/memories
+  mkdir -p _shared/skills
+fi
+
+# 2) Per-gateway scaffolding (let `hermes setup` create memories/skills/sessions)
+for gw in "${GATEWAYS[@]}"; do
+  mkdir -p "$PARENT/$gw"
+  (cd "$PARENT/$gw" && hermes setup)    # accept blank token; .env injects it later
+done
+
+# 3) Apply the symlinks the strategy requires
+for gw in "${GATEWAYS[@]}"; do
+  case "$STRATEGY" in
+    shared-skills)
+      rm -rf "$PARENT/$gw/skills"
+      ln -s "$PARENT/_shared/skills" "$PARENT/$gw/skills"
+      ;;
+    shared-both)
+      rm -rf "$PARENT/$gw/memories" "$PARENT/$gw/skills"
+      ln -s "$PARENT/_shared/memories" "$PARENT/$gw/memories"
+      ln -s "$PARENT/_shared/skills"   "$PARENT/$gw/skills"
+      ;;
+    isolated)
+      : ;; # nothing to symlink
+  esac
+done
+
+# Verify (any non-isolated gateway should show arrows)
+ls -la "$PARENT/${GATEWAYS[1]}" | grep '^l'
+```
+
+> *What this does:* picks the strategy, creates the parent + (optional) `_shared/` skeleton, then runs `hermes setup` once per gateway to materialise its real `memories/`, `skills/`, and `sessions/` directories. Finally, it replaces the per-gateway `memories/` or `skills/` with symlinks for the strategies that share. The `isolated` branch leaves everything as real folders.
+
+### 3.3 Per-gateway `.env` files
+
+Each gateway needs its own bot token. Create one bot per gateway in [@BotFather](https://t.me/BotFather) (`/newbot` → name → username). BotFather hands you a fresh **45–46 character** token each time. **Reusing a token across two gateways will fail with `409 Conflict` from Telegram** — one polling process per token, no exceptions.
+
+This repo ships [`templates/.env.template`](./templates/.env.template) and a worked example at [`gateways/work/.env.example`](./gateways/work/.env.example). Copy one of them into each gateway and fill in the real values:
+
+```bash
+for gw in "${GATEWAYS[@]}"; do
+  cp templates/.env.template "$PARENT/$gw/.env"
+  chmod 600 "$PARENT/$gw/.env"
+  $EDITOR "$PARENT/$gw/.env"
 done
 ```
 
-When prompted, you can leave the bot token blank for now — we'll inject it from `.env` later.
+The variables you fill in (per gateway):
 
-### 3.3 Make the brain shared via symlinks
+| Variable | What goes in it |
+|---|---|
+| `HERMES_TELEGRAM_BOT_TOKEN` | The token BotFather gave you for *this* bot. Different per gateway. |
+| `TELEGRAM_ALLOWED_USERS` | Comma-separated Telegram user IDs allowed to talk to this bot ([@userinfobot](https://t.me/userinfobot)). Blank = anyone. |
+| `HERMES_EPHEMERAL_SYSTEM_PROMPT` | The bot's behavior, tools, and constraints (the "voice"). Multi-line. |
+| `XIAOMI_MIMO_API_KEY` | MiMo Token Plan / Orbit key — see [§5.2](#52-get-a-key). |
+| `OPENROUTER_API_KEY` | Fallback model key — see [Part 4](#part-4-openrouter-api-setup). |
+| `OBSIDIAN_VAULT_PATH` | Absolute path to your vault — see [Part 6](#part-6-add-an-obsidian-second-brain). Same path in every gateway's `.env` (that's how cross-bot durable knowledge works). |
+
+> *Why `chmod 600`:* Hermes refuses to load `.env` files that are world-readable. Your bot token is the password to your bot — locking it to your user only is non-negotiable.
+
+> *Identity vs behavior split.* The `.env` `HERMES_EPHEMERAL_SYSTEM_PROMPT` carries the operational rules (response format, tool usage, constraints). Identity and personality (who this bot *is*) live in a separate `SOUL.md` next to it — see the worked example at [`gateways/work/SOUL.md`](./gateways/work/SOUL.md). The split keeps slow-changing identity separate from frequently-tweaked behavior.
+
+### 3.4 Per-gateway `config.yaml`
+
+`config.yaml` is the model + auxiliary + Telegram block. Safe to commit (no secrets). The bot token is injected at startup by `inject_config.py` (§3.5) so this file stays clean.
+
+The repo ships [`templates/config.yaml.template`](./templates/config.yaml.template) — copy into each gateway:
 
 ```bash
-for gw in "${EXTRAS[@]}"; do
-  rm -rf ~/gateways/"$gw"/memories ~/gateways/"$gw"/skills
-  ln -s ~/gateways/"$PRIMARY"/memories ~/gateways/"$gw"/memories
-  ln -s ~/gateways/"$PRIMARY"/skills   ~/gateways/"$gw"/skills
+for gw in "${GATEWAYS[@]}"; do
+  cp templates/config.yaml.template "$PARENT/$gw/config.yaml"
 done
 ```
 
-Verify any secondary (e.g., `personal`):
+Tweak `model.default` per gateway if you want different model tiers per voice (e.g. `mimo-v2.5-pro` for technical bots, `mimo-v2-flash` for casual ones). The `auxiliary:` block routes compression and title-generation to a model — set this or you'll get the "No auxiliary LLM provider configured" warning and lose middle context on long conversations.
+
+### 3.5 The token injector — `inject_config.py`
+
+Reads `HERMES_TELEGRAM_BOT_TOKEN` from the gateway's environment (already sourced from `.env` by `run.sh`) and patches it into `config.yaml` under `platforms.telegram.token`. That way the secret stays in `.env` (gitignored), and `config.yaml` stays safe to commit.
+
+Drop the universal version into the parent folder (one copy serves every gateway):
 
 ```bash
-ls -la ~/gateways/personal/ | grep "^l"
+cp templates/inject_config.py.template "$PARENT/inject_config.py"
 ```
 
-You should see arrows pointing from `memories` and `skills` to the primary's paths.
+Behavior:
 
-### 3.4 Create the rest of your Telegram bots
+- Reads `HERMES_HOME` from the env (set by `run.sh` per gateway).
+- Reads `TOKEN_ENV` if you want to override the env var name (default `HERMES_TELEGRAM_BOT_TOKEN`).
+- Strips `\r` and `\n` from the token aggressively — covers Windows-edited `.env` files where `\r` can survive `.strip()`.
+- Writes atomically (`.yaml.tmp` → `replace`) so you never get a half-written config.
+- Uses `width=float("inf")` so a 46-char token isn't line-wrapped (which would corrupt it on next read).
 
-Repeat [§2.1](#21-create-a-bot-in-telegram) in BotFather **once per gateway** beyond the first. Each one needs its own name, its own username, and **its own token** (BotFather hands you a new one each time). Save them — you'll paste each into the matching gateway's `.env` next.
+You should not need to edit this file. Same script works for every gateway.
 
-### 3.5 Per-gateway `.env` files
+### 3.6 The launcher — `run.sh`
 
-This repo ships **ready-to-use templates**: [`gateways/work/.env.example`](./gateways/work/.env.example) and [`gateways/personal/.env.example`](./gateways/personal/.env.example). Each one already contains a fully-fleshed-out personality prompt (the work voice = elite automation expert; the personal voice = warm life copilot) — copy, fill in your real tokens, and you're done.
+The launcher is **gateway-agnostic** — it auto-discovers every sibling directory that has both `.env` and `config.yaml` and silently skips anything starting with `_` (so `_shared/` is never started as a runaway gateway).
 
-The convention: **`.env.example` is the safe-to-commit template**, **`.env` is the real file** with your secrets (gitignored). On the VPS:
+Drop the universal version into the parent folder:
 
 ```bash
-cd ~/gateways
-for gw in "$PRIMARY" "${EXTRAS[@]}"; do
-  cp "$gw/.env.example" "$gw/.env"   # <- creates the real file from the template
-  chmod 600 "$gw/.env"
-  $EDITOR "$gw/.env"               # paste tokens, allowed-user IDs, API keys
-done
+cp templates/run.sh.template "$PARENT/run.sh"
+chmod +x "$PARENT/run.sh"
 ```
 
-The variables you'll fill in (one set per gateway):
+CLI surface:
 
-| Variable                         | What goes in it                                                                                                                                                                    |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HERMES_TELEGRAM_BOT_TOKEN`      | The token BotFather gave you for _this_ bot. Different per gateway.                                                                                                                |
-| `TELEGRAM_ALLOWED_USERS`         | Comma-separated Telegram user IDs allowed to talk to this bot. From [@userinfobot](https://t.me/userinfobot). Blank = anyone.                                                      |
-| `HERMES_EPHEMERAL_SYSTEM_PROMPT` | The bot's personality (multi-line). Already pre-filled in the templates.                                                                                                           |
-| `XIAOMI_MIMO_API_KEY`            | Your MiMo Token Plan / Orbit key — see [§5.2](#52-get-a-key).                                                                                                                      |
-| `OPENROUTER_API_KEY`             | Fallback model key — see [Part 4](#part-4-openrouter-api-setup).                                                                                                                   |
-| `OBSIDIAN_VAULT_PATH`            | Absolute path to your vault — see [Part 6](#part-6-add-an-obsidian-second-brain). The same path goes in **every** gateway's `.env` (that's how cross-bot durable knowledge works). |
-
-> _Why `chmod 600`:_ Hermes refuses to load `.env` files that are world-readable. That's a security feature — your bot token is the password to your bot. Locking it to your user only is non-negotiable.
-
-> _Different voices, one shared canon._ The templates intentionally ship with two contrasting personalities (terse-technical vs warm-coachy) so you can see how dramatically a single env var changes a bot's vibe. Edit them or replace them entirely — that variable is the whole "voice" of each bot.
-
-### 3.6 The launcher: `run.sh`
-
-The launcher and the token-injector are **already in this repo**:
-
-- [`gateways/run.sh`](./gateways/run.sh) — the multi-gateway launcher. **Auto-discovers** every subdirectory containing a `.env`, so you never need to edit it when you add or remove a bot.
-- [`gateways/inject_config.py`](./gateways/inject_config.py) — reads `HERMES_TELEGRAM_BOT_TOKEN` from `.env` at startup and writes it into `config.yaml` under `platforms.telegram.token`. That's why your token lives in `.env` (gitignored) while `config.yaml` is safe to commit.
-
-Copy both onto the VPS:
-
-```bash
-# Inside the Hermes container
-cp /path/to/this/repo/gateways/run.sh         ~/gateways/run.sh
-cp /path/to/this/repo/gateways/inject_config.py ~/gateways/inject_config.py
-chmod +x ~/gateways/run.sh
+```
+./run.sh                  # alias of `all`
+./run.sh all | both       # start every discovered gateway
+./run.sh list             # one gateway name per line
+./run.sh status           # running PIDs annotated with gateway names
+./run.sh stop             # stop every gateway
+./run.sh stop <name>      # stop only one gateway
+./run.sh <name>           # start only <name> in the foreground
+./run.sh --help           # usage
 ```
 
-If you cloned this repo onto the VPS directly, you can `cd ~/hermes-agent-setup/gateways && cp run.sh inject_config.py ~/gateways/` instead.
+Discovery rules (verbatim from the script):
 
-> _What this does:_
->
-> - `./run.sh all` — start every gateway it finds (the default).
-> - `./run.sh work` (or any gateway name) — start just that one, in the foreground.
-> - `./run.sh list` — print discovered gateway names.
-> - `./run.sh stop` — kill every running gateway.
-> - `./run.sh status` — show what's running.
->
-> `both` is kept as an alias for `all` so old muscle memory still works.
+1. Sibling has `.env` AND `config.yaml`.
+2. Sibling name does not start with `_`.
 
-### 3.7 Run them all
+Per-gateway behavior:
+
+- Subshell-isolated (`( … )`) — env vars from one gateway never leak into the next.
+- Source the gateway's `.env`.
+- Sanity-check `HERMES_TELEGRAM_BOT_TOKEN` length; warn if not 45–46 chars.
+- `python3 inject_config.py` to patch the token into `config.yaml`.
+- `cd <gateway>` and `exec hermes gateway run`.
+
+You should not need to edit this file. Same script works for any parent path (`~/gateways`, `~/agents`, `/opt/hermes`).
+
+### 3.7 First run + verification
 
 ```bash
-cd ~/gateways
-chmod +x run.sh
-./run.sh list      # confirms which gateways were discovered
+cd "$PARENT"
+./run.sh list                 # confirms which gateways were discovered
 ./run.sh all
 ```
 
-Send "hello" to each bot. Each replies in its own voice. **Same brain, different personalities.**
+Send "hello" to each bot from Telegram. Each replies in its own voice.
 
-### 3.8 Make it permanent
+Verify the directories Hermes wrote to:
 
-How you keep `run.sh all` alive forever depends on whether you're on the Hostinger 1-click (Docker) or bare-metal.
+```bash
+ls -la "$PARENT/${GATEWAYS[0]}/sessions"      # per-bot sessions DB
+ls -la "$PARENT/${GATEWAYS[0]}/memories"      # MEMORY.md (per-bot OR symlink, depending on strategy)
+ls -la "$PARENT/${GATEWAYS[0]}/skills"        # skill files (per-bot OR symlink)
 
-**Option A — Hostinger 1-click (Docker), tmux inside the container (simplest):**
+# Expected per strategy:
+#   isolated      memories/ + skills/ are real dirs in BOTH gateways
+#   shared-skills memories/ real per-bot, skills/ → _shared/skills
+#   shared-both   memories/ + skills/ → _shared/...
+```
 
-The Hostinger template already runs the container with `--restart unless-stopped`, so the _container_ lives forever. You only need to make sure the gateway launcher comes up when the container starts. The cleanest way is `tmux` inside the container:
+`./run.sh status` should print one annotated line per running PID, e.g. `pid=12345 gateway=work`. Press `Ctrl+C` in the launcher's terminal to stop everything (the trap propagates to all children).
+
+### 3.8 systemd (optional, but recommended for production)
+
+How you keep `run.sh all` alive on reboots depends on whether you're on Hostinger 1-click (Docker) or bare-metal.
+
+**Bare-metal — native systemd:**
+
+```bash
+sudo tee /etc/systemd/system/hermes-gateways.service >/dev/null <<EOF
+[Unit]
+Description=Hermes Multi Telegram Gateways
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$PARENT
+ExecStart=$PARENT/run.sh all
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now hermes-gateways.service
+journalctl -u hermes-gateways.service -f      # tail
+```
+
+The repo ships a substitutable template at [`templates/systemd-hermes-gateways.service.template`](./templates/systemd-hermes-gateways.service.template) if you prefer a file copy with `{{PARENT}}` substitution.
+
+**Hostinger 1-click (Docker), simplest — `tmux` inside the container:**
 
 ```bash
 # Inside the container
-tmux new-session -d -s hermes 'cd ~/gateways && ./run.sh all'
+tmux new-session -d -s hermes "cd $PARENT && ./run.sh all"
 tmux attach -t hermes              # watch logs; Ctrl+B then D to detach
 ```
 
-For automatic relaunch on container restart, append a one-liner to the container's `~/.bashrc` (the template usually starts an interactive shell on boot):
+For automatic relaunch on container restart, append a one-liner to `~/.bashrc`:
 
 ```bash
-echo 'tmux has-session -t hermes 2>/dev/null || tmux new-session -d -s hermes "cd ~/gateways && ./run.sh all"' >> ~/.bashrc
+echo "tmux has-session -t hermes 2>/dev/null || tmux new-session -d -s hermes 'cd $PARENT && ./run.sh all'" >> ~/.bashrc
 ```
 
-**Option B — Hostinger 1-click, host-side systemd wrapping `docker exec` (more robust):**
+**Hostinger 1-click (Docker), more robust — host-side systemd wrapping `docker exec`:**
 
-If you want hard guarantees that the launcher comes back after host reboots without leaning on bashrc, add a host-side systemd unit. Run this on the **host VM**, not inside the container:
+Run on the **host VM**, not inside the container. Replace `hermes-agent` with whatever `docker ps` shows for the container name and substitute the in-container parent path:
 
 ```ini
 # /etc/systemd/system/hermes-gateways.service
@@ -805,213 +970,209 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-```bash
-systemctl daemon-reload
-systemctl enable --now hermes-gateways.service
-systemctl status hermes-gateways.service
-journalctl -u hermes-gateways.service -f      # tail logs
-```
+> _Prefer one unit per bot?_ Drop a templated unit at `/etc/systemd/system/hermes-gateway@.service` with `ExecStart=/root/gateways/run.sh %i`, then `systemctl enable --now hermes-gateway@work hermes-gateway@personal`. Cleaner per-bot logs via `journalctl -u hermes-gateway@work`.
 
-Replace `hermes-agent` with whatever `docker ps` actually shows for your container name. If your gateways live at a different in-container path (you saw something other than `/root/gateways` in [§1.4](#14-find-the-persistent-volume-this-is-where-your-data-lives)), update the `ExecStart` path to match.
+### 3.9 One-command bootstrap (`bootstrap.sh`)
 
-**Option C — Bare-metal install, native systemd:**
-
-Create `/etc/systemd/system/hermes-gateways.service`:
-
-```ini
-[Unit]
-Description=Hermes Multi Telegram Gateways
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/gateways
-ExecStart=/root/gateways/run.sh all
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+Everything in §3.1–3.8 in one command:
 
 ```bash
-systemctl daemon-reload
-systemctl enable --now hermes-gateways.service
-systemctl status hermes-gateways.service
+curl -fsSL https://raw.githubusercontent.com/Demonbane18/hermes-agent-setup/main/bootstrap.sh | bash
 ```
 
-> _Prefer one unit per bot?_ Drop a templated unit at `/etc/systemd/system/hermes-gateway@.service` with `ExecStart=/root/gateways/run.sh %i` (bare-metal) or `ExecStart=/usr/bin/docker exec hermes-agent /root/gateways/run.sh %i` (Docker), then `systemctl enable --now hermes-gateway@work hermes-gateway@personal …`. Slightly more ceremony, much cleaner per-bot logs via `journalctl -u hermes-gateway@work`.
-
-### 3.9 What you just gained
-
-- **Ask the personal bot at lunch:** _"What did I commit to the Acme project yesterday?"_ — it knows because the work bot's session was summarized into the shared memory.
-- **A skill the work bot writes** (e.g., "deploy n8n via Docker") is **immediately available** to every other bot too. No copying.
-- **Many voices, one history.** The agent can recall a conversation that happened with one bot while replying through another in a different tone.
-
-This is the unlock. Profiles couldn't do it.
-
-### 3.10 Adding a third (or fourth, or Nth) bot
-
-Once the dual setup works, scaling up is mechanical. **Adding a new bot takes about 60 seconds** plus whatever time you spend tuning its system prompt.
+Or from a clone:
 
 ```bash
-# 1. Pick a name and create the folder
+git clone https://github.com/Demonbane18/hermes-agent-setup.git
+cd hermes-agent-setup
+./bootstrap.sh
+```
+
+The script auto-detects three modes.
+
+**Mode A — fresh setup.** Run with no flags or args. It scans `$HOME`, `/root`, `/home/*` (and any `--scan-path` you pass) for an existing Hermes parent folder; if none is found it walks you through:
+
+1. Parent folder (default `~/gateways`)
+2. Number of gateways (default 2)
+3. Names (default `gateway-1`, `gateway-2`, …)
+4. Sharing strategy (1 = `isolated` [default], 2 = `shared-skills`, 3 = `shared-both`)
+
+Then it builds the layout, installs `run.sh` and `inject_config.py`, and prints next-steps with the exact paths to edit.
+
+**Mode B — extend an existing setup.** If the scan finds a parent folder already shaped like a Hermes setup (has `run.sh` + `inject_config.py` + ≥1 gateway with `config.yaml`), you'll get:
+
+```
+found existing setup: /root/gateways
+Extend it? [Y]:
+```
+
+The script auto-detects which strategy your existing parent uses (by checking whether the first gateway's `memories/` and `skills/` are symlinks vs real dirs) and applies the same strategy to any new gateways. You can override with `--strategy`.
+
+**Mode C — non-interactive (scripted automation).** Flag-driven, no prompts:
+
+```bash
+# Fresh: 3 isolated gateways
+./bootstrap.sh --parent ~/gateways --count 3 --names alpha,beta,gamma \
+    --strategy isolated --non-interactive
+
+# Add 2 gateways to an existing parent (strategy auto-detected)
+./bootstrap.sh --add --parent ~/gateways --names delta,epsilon --non-interactive
+```
+
+Full flag list: `./bootstrap.sh --help`.
+
+**Safety invariants** (locked behavior):
+
+- Never overwrites existing `.env` or `config.yaml`. Skipped paths are logged as `[skip] <path> exists`.
+- Backs up `run.sh` and `inject_config.py` to `.bak` exactly once when replacing with a non-matching universal template. If `.bak` already exists, leaves both files alone and warns.
+- All new symlinks use absolute paths.
+- Every newly-created `.env` gets `chmod 600`.
+- `--dry-run` prints every action without executing.
+
+### 3.10 Sharing strategies — reference deep-dive
+
+The three strategies in this guide differ in **what the bots share** and **how cross-pollination happens**. Pick by use case, not by feel.
+
+**`isolated`** — each gateway's `memories/` and `skills/` are real, separate folders. **Default.** Use when:
+
+- You want each bot to remember only its own conversations (max separation).
+- A second human is in the loop (a partner, an assistant, a teammate piping into a shared on-call bot) and you don't want one bot's notes surfacing in another.
+- You're A/B-testing personalities and don't want one's drift contaminating the other.
+- You'd rather promote durable knowledge into the [Obsidian vault](#part-6-add-an-obsidian-second-brain) — both bots read it, but only what you deliberately commit crosses over.
+
+```
+~/gateways/
+├── work/
+│   ├── memories/     (real, work-only)
+│   └── skills/       (real, work-only)
+└── personal/
+    ├── memories/     (real, personal-only)
+    └── skills/       (real, personal-only)
+```
+
+**`shared-skills`** — `skills/` is symlinked to `_shared/skills/`; `memories/` stays per-bot. Use when:
+
+- You write skills once and want every bot to benefit.
+- You still want each bot's `MEMORY.md` to stay tight and on-topic.
+- You like the idea of one client-tailored persona per gateway, all sharing your hard-won automation library.
+
+```
+~/gateways/
+├── _shared/
+│   └── skills/       (canonical, all bots share)
+├── work/
+│   ├── memories/     (real, work-only)
+│   └── skills/  →    _shared/skills
+└── personal/
+    ├── memories/     (real, personal-only)
+    └── skills/  →    _shared/skills
+```
+
+**`shared-both`** — `memories/` AND `skills/` symlinked to `_shared/`. The "one head, many voices" classic. Use when:
+
+- Every bot is a persona of the same you — work-you, personal-you, coach-you.
+- You want "what did I tell the work bot yesterday?" to just work from the personal bot.
+- Cross-pollination is a feature, not a leak.
+
+```
+~/gateways/
+├── _shared/
+│   ├── memories/     (canonical, all bots share)
+│   └── skills/       (canonical, all bots share)
+├── work/
+│   ├── memories/  →  _shared/memories
+│   └── skills/    →  _shared/skills
+└── personal/
+    ├── memories/  →  _shared/memories
+    └── skills/    →  _shared/skills
+```
+
+> _Migration._ Switching strategies on an existing setup is a `rm`/`mkdir`/`ln -s` recipe — explicitly **out of scope** for `bootstrap.sh`. To go from `isolated` → `shared-both` for example: stop the launcher, `mv work/memories _shared/memories`, then `ln -s _shared/memories work/memories` and `ln -s _shared/memories personal/memories` (after backing up `personal/memories` if it had its own data). Take a snapshot first.
+
+> _Profiles is a fourth pattern, not a fourth strategy._ `hermes profile create` (upstream) gives you fully isolated processes with their own everything — different binary invocations, different env, different files. Use profiles when you need **hard tenant isolation** (separate clients, compliance boundary, can't-leak-ever data). Multi-gateway is for one operator with several voices on one box.
+
+### 3.11 Adding a new gateway later
+
+Two paths.
+
+**Manual (60 seconds plus prompt-tuning time):**
+
+```bash
 NAME=coach
-mkdir -p ~/gateways/"$NAME" && cd ~/gateways/"$NAME"
-hermes setup        # bot token can stay blank — .env injects it
+PARENT=~/gateways
+STRATEGY=$(\
+  if [ -L "$PARENT/$(ls -1 "$PARENT" | grep -v '^_' | head -1)/memories" ] \
+  && [ -L "$PARENT/$(ls -1 "$PARENT" | grep -v '^_' | head -1)/skills" ]; then echo shared-both; \
+  elif [ -L "$PARENT/$(ls -1 "$PARENT" | grep -v '^_' | head -1)/skills" ]; then echo shared-skills; \
+  else echo isolated; fi)
 
-# 2. Symlink the shared brain into it
-rm -rf ~/gateways/"$NAME"/memories ~/gateways/"$NAME"/skills
-ln -s ~/gateways/work/memories ~/gateways/"$NAME"/memories
-ln -s ~/gateways/work/skills   ~/gateways/"$NAME"/skills
+mkdir -p "$PARENT/$NAME"
+(cd "$PARENT/$NAME" && hermes setup)        # blank token, .env injects later
 
-# 3. Drop in the .env, paste a NEW BotFather token + this bot's voice
-cp ~/gateways/work/.env.example ~/gateways/"$NAME"/.env   # use the work template as a starting point
-chmod 600 ~/gateways/"$NAME"/.env
-nano ~/gateways/"$NAME"/.env
+case "$STRATEGY" in
+  shared-skills)
+    rm -rf "$PARENT/$NAME/skills"
+    ln -s "$PARENT/_shared/skills" "$PARENT/$NAME/skills"
+    ;;
+  shared-both)
+    rm -rf "$PARENT/$NAME/memories" "$PARENT/$NAME/skills"
+    ln -s "$PARENT/_shared/memories" "$PARENT/$NAME/memories"
+    ln -s "$PARENT/_shared/skills"   "$PARENT/$NAME/skills"
+    ;;
+esac
 
-# 4. Restart the launcher — it auto-discovers the new gateway
-systemctl restart hermes-gateways.service     # or: ./run.sh stop && ./run.sh all
-./run.sh list                                  # confirm it picked up the new bot
+cp "$PARENT/work/.env.example" "$PARENT/$NAME/.env" 2>/dev/null \
+  || cp templates/.env.template "$PARENT/$NAME/.env"
+chmod 600 "$PARENT/$NAME/.env"
+$EDITOR "$PARENT/$NAME/.env"                # paste new BotFather token + this bot's voice
+
+systemctl restart hermes-gateways.service   # or: ./run.sh stop && ./run.sh all
+./run.sh list                                # confirm new gateway picked up
 ```
 
-That's it. No code changes, no edits to `run.sh`, no extra systemd unit. The auto-discovery loop in `run.sh` finds the new folder by virtue of it containing a `.env` and starts it on the next launch.
+`run.sh` auto-discovers the new folder by virtue of it containing `.env` + `config.yaml`. No edits to `run.sh` needed.
 
-**Removing a bot** is the inverse: stop the launcher, delete the folder (`rm -rf ~/gateways/coach`), restart. The shared `memories/` and `skills/` are untouched because they live in `work/`.
-
-> _Bot tokens are unique per bot._ Don't try to reuse one token across two gateways — Telegram only allows one process per token, and you'll get the `409 Conflict: terminated by other getUpdates` error. Always create a fresh BotFather bot for each new gateway.
-
-### 3.11 Choosing your pattern: full-share vs split-brain
-
-So far this guide has been describing **full-share**: every gateway symlinks both `memories/` and `skills/` into the primary, so any fact one bot learns surfaces in every bot's recall. That's perfect when you want maximum compounding and don't mind cross-pollination.
-
-But sometimes you don't want cross-pollination. You want each bot to remember its own conversations _separately_, while still benefiting from the shared library of skills the agent writes for itself. That's **split-brain**: isolate `memories/`, share `skills/`, and put the durable, "actually-important" knowledge in **Obsidian** — which both bots also read.
-
-#### What to share, what to isolate, where it lives
-
-```
-                    Full-Share                       Split-Brain
-                  (default headline)                 (this section)
-┌───────────────┬──────────────────────┬──────────────────────────────┐
-│ memories/     │  symlink → primary   │  REAL folder per gateway     │
-│ skills/       │  symlink → primary   │  symlink → primary           │
-│ sessions/     │  per gateway         │  per gateway                 │
-│ Obsidian vault│  shared (one path)   │  shared (one path)          │
-└───────────────┴──────────────────────┴──────────────────────────────┘
-
- In split-brain, Obsidian becomes THE source of truth for anything you
-  actually want both bots to know. Memories are now scratch; skills are
-  recipes; the vault is the canon.
-```
-
-#### Why this works
-
-`memories/` is a junk drawer. The agent dumps things into `MEMORY.md` whenever something feels important _in the moment of a conversation_ — a stray URL, a half-formed preference, a fact that turned out to be wrong an hour later. Sharing it across bots means every transient note bleeds everywhere.
-
-`skills/` is the opposite — they're slow, deliberate, written-down recipes. The agent only writes a skill after solving something it expects to need again. Sharing skills is almost always a win because the cost of duplication (rewriting the same skill twice in two bots) is high, and the leak risk (a skill is procedural, not personal) is low.
-
-The vault — your Obsidian folder — is where you (or the agent, with your sign-off) put the **durable** stuff: project briefs, contact details, decisions, OKRs, the kind of thing you want both bots to recall a month from now. Because the vault is a Linux path that both `.env` files point at, every bot reads/writes it through the `obsidian_vault` skill — and the writes are visible, traceable, and editable in your Obsidian app.
-
-#### Setup (split-brain variant)
-
-Start from a working full-share setup ([§3.1–3.7](#part-3-the-multi-gateway-pattern-the-magic)). The change is **one symlink**: remove the shared `memories/` link in each secondary, replace with a real folder. Keep `skills/` symlinked.
+**Bootstrap (zero ceremony):**
 
 ```bash
-# 1. Stop the gateways first
-./run.sh stop
-
-# 2. For each non-primary gateway, restore an isolated memories/ folder
-PRIMARY=work
-for gw in ~/gateways/*/; do
-  name=$(basename "$gw")
-  [ "$name" = "$PRIMARY" ] && continue
-  [ -L "$gw/memories" ] || continue                        # skip if already isolated
-
-  rm "$gw/memories"                                        # remove the symlink only
-  mkdir -p "$gw/memories"
-
-  # Optional: seed the new isolated memory with a copy of the primary's
-  # current MEMORY.md so the bot doesn't start cold.
-  cp "~/gateways/$PRIMARY/memories/MEMORY.md" "$gw/memories/MEMORY.md" 2>/dev/null || true
-done
-
-# 3. Skills stay shared — verify
-ls -la ~/gateways/personal/ | grep -E "(memories|skills)"
-# memories  →  (a real directory now)
-# skills    →  link to ../work/skills
-
-# 4. Restart
-./run.sh all
+./bootstrap.sh --add --parent ~/gateways --names coach
+# or interactively
+./bootstrap.sh
 ```
 
-Verify each bot now logs a separate `MEMORY.md`. Send the work bot a sentence like _"remember that I prefer pnpm over npm"_ — it lands in `~/gateways/work/memories/MEMORY.md` and **does not** show up in `~/gateways/personal/memories/MEMORY.md`. Mission accomplished.
+The bootstrap detects your existing strategy and applies it automatically. Add multiple at once: `--names coach,fitness,finance`.
 
-#### Teach the bots to use Obsidian as the canon
+**Removing a bot:** stop the launcher, `rm -rf ~/gateways/<name>`, restart. The shared `_shared/memories/` and `_shared/skills/` are untouched because they don't live inside the gateway folder.
 
-Split-brain is only as good as your discipline about putting durable facts in the vault. Add a paragraph to **every** gateway's `HERMES_EPHEMERAL_SYSTEM_PROMPT` so the agent itself knows the rule:
+> _Bot tokens are unique per bot._ Don't reuse a token across two gateways — Telegram only allows one polling process per token (`409 Conflict` from `getUpdates`). Always create a fresh BotFather bot for each new gateway.
 
-```text
-Your `memories/MEMORY.md` is private to this gateway and is treated as
-short-term scratch. Anything that should outlive this conversation —
-decisions, contacts, project state, preferences, important dates — goes
-into the user's Obsidian vault at $OBSIDIAN_VAULT_PATH via the
-obsidian_vault skill. Confirm with the user before promoting a memory
-into the vault. Other gateways read the vault, not your memory.
-```
+### 3.12 Cross-gateway handoff (`_shared/handoff/`)
 
-Then update the `obsidian_vault` skill (from [§6.3](#63-give-hermes-a-skill-to-use-it)) so it also handles **promotion**: when the user says _"that's important, save it,"_ the bot writes a vault note, then optionally drops a one-line pointer in `memories/MEMORY.md` (like _"see vault: 2026-05/preferences-pnpm.md"_) so it remembers where the canon lives.
+When `memories/` is **isolated** (the `isolated` and `shared-skills` strategies), bots can't read each other's transient context. That's the whole point. But sometimes you genuinely *do* want them to coordinate — the work bot wants to tell the personal bot "deadline shifted to Tuesday" without dumping its full memory across the wall.
 
-#### Tradeoffs at a glance
+**The pattern:** a `<parent>/_shared/handoff/` directory with plain markdown files. Both bots `Read` and `Write` to it via their normal tool calls. No symlinks, no IPC, no protocol — just files in a shared folder, deliberate writes, deliberate reads.
 
-| Dimension         | Full-Share wins when…                                                                     | Split-Brain wins when…                                                                                                                  |
-| ----------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Privacy           | …all your bots are personas of you — work + life + coach.                                 | …a bot will be seen by others (shared family bot, on-call bot a partner can ping) and you don't want personal scratch to surface there. |
-| Cross-bot recall  | …you _want_ "what did I tell the work bot yesterday?" to just work from the personal bot. | …you want cross-bot knowledge to be **deliberate** — only what you've explicitly committed to the vault crosses over.                   |
-| Memory hygiene    | …you don't mind that `MEMORY.md` slowly fills with every bot's noise.                     | …you want each bot's `MEMORY.md` to stay tight and on-topic.                                                                            |
-| Skill compounding | Yes — fully shared.                                                                       | Yes — still fully shared (only `memories/` is split).                                                                                   |
-| Setup complexity  | One symlink each per secondary (memories + skills).                                       | One symlink each (skills only).                                                                                                         |
-| Switching cost    | Easy → split-brain: `rm` the memories symlink, `mkdir` a folder.                          | Easy → full-share: delete the folder, recreate the symlink. **Both directions are reversible in 30 seconds.**                           |
-| Disk usage        | Lower (one `memories/`).                                                                  | Slightly higher (N copies of `MEMORY.md`, all tiny).                                                                                    |
-| Vault dependence  | Optional.                                                                                 | **Strongly recommended** — the vault is the cross-bot canon.                                                                            |
-
-#### When each is the right call
-
-- **Full-share** is the right default for solo builders. You are the only person talking to any of your bots; cross-pollination of context is a feature, not a bug. Start here.
-- **Split-brain** is the right call the moment a second human enters the picture (a partner, an assistant, a teammate piping into a shared on-call bot), or the moment you have a bot that should genuinely forget everything else (a finance bot you don't want spilling personal stuff into the work voice during a screen-share).
-- **Profiles** is the right call when you'd be uncomfortable if Bot B's operator could `ssh` to the box and read Bot A's files — i.e., true tenant separation. That's the official upstream story; this repo doesn't try to improve on it.
-
-> _You can change your mind._ Both multi-gateway patterns share the same `run.sh` and the same directory layout. Switching is a `rm`/`ln -s`/restart away. Don't agonize at setup time — pick what feels right, and switch later if the leakage (or the cold isolation) starts to bug you.
-
-### 3.12 Cross-gateway handoff (`shared/handoff/`)
-
-Split-brain bots can't read each other's `memories/`. That's the whole point. But sometimes you genuinely _do_ want them to coordinate — the work bot wants to tell the personal bot "hey, deadline shifted to Tuesday" without dumping its full memory across the wall.
-
-**The pattern:** a tiny `gateways/shared/handoff/` directory with plain markdown files. Both bots can `Read` and `Write` to it. No symlinks, no IPC, no protocol — just files in a shared folder, deliberate writes, deliberate reads.
-
-This repo ships a starter at [`gateways/shared/handoff/README.md`](./gateways/shared/handoff/README.md). The convention used in production:
+This repo ships a starter at [`gateways/_shared/handoff/README.md`](./gateways/_shared/handoff/README.md). Convention used in production:
 
 ```
-gateways/shared/handoff/
+<parent>/_shared/handoff/
 ├── README.md              # explains the protocol
 ├── weekend-handoff.md     # work bot writes Friday 6pm; personal bot reads
 └── weekend-notes.md       # personal bot writes Sunday 6pm; work bot reads
 ```
 
-| Day(s)           | Owning bot   | What gets written                                                                                 |
-| ---------------- | ------------ | ------------------------------------------------------------------------------------------------- |
-| Mon–Fri          | **work**     | Sprint state, ops, automations, blockers, things-on-deck                                          |
-| Fri 18:00 (cron) | **work**     | Writes `weekend-handoff.md`: what's pending, what to watch for over the weekend                   |
-| Sat–Sun          | **personal** | Reads handoff at the start of weekend sessions; appends to `weekend-notes.md` if anything came up |
-| Mon 07:30 (cron) | **work**     | Reads `weekend-notes.md`, summarises into its own context, archives the file                      |
+| Day(s) | Owning bot | What gets written |
+|---|---|---|
+| Mon–Fri | **work** | Sprint state, ops, automations, blockers |
+| Fri 18:00 (cron) | **work** | Writes `weekend-handoff.md`: what's pending, what to watch over the weekend |
+| Sat–Sun | **personal** | Reads handoff at the start of weekend sessions; appends to `weekend-notes.md` |
+| Mon 07:30 (cron) | **work** | Reads `weekend-notes.md`, summarises into context, archives the file |
 
 Make it work in three steps:
 
-1. **Create the folder and starter README** (this repo's `gateways/shared/handoff/` already has it).
-2. **Add a shared skill** so every bot knows the convention. Drop `handoff-protocol.md` into the shared `skills/` folder — example skill body is in [`gateways/shared/handoff/README.md`](./gateways/shared/handoff/README.md).
-3. **Add cron jobs** (per gateway, via `hermes -p work cron add` and `hermes -p personal cron add`) for the Friday-write and Monday-read times. The cron payload is just a Hermes prompt: _"It's Friday 6pm — write the weekend handoff to `~/gateways/shared/handoff/weekend-handoff.md`."_
-
-That's the whole thing. The handoff folder is to split-brain what the shared `memories/` is to full-share — the deliberate, controllable bridge. Promote facts when you mean to; otherwise the brains stay separate.
+1. **Create the folder** (`bootstrap.sh` does this for non-isolated strategies; for `isolated` create it manually: `mkdir -p ~/gateways/_shared/handoff`).
+2. **Add a shared skill** so every bot knows the convention. Drop `handoff-protocol.md` into the shared `skills/` (or every gateway's `skills/` if `isolated`). Example skill body in [`gateways/_shared/handoff/README.md`](./gateways/_shared/handoff/README.md).
+3. **Add cron jobs** (per gateway, via `hermes -p work cron add` and `hermes -p personal cron add`) for the Friday-write and Monday-read times.
 
 > _Three or more bots?_ Add a third file. Or split by topic instead of calendar. The pattern is "named markdown files in a shared folder, written and read on schedule." Adapt freely.
 
@@ -1028,7 +1189,8 @@ help - Show available commands
 new - Begin a fresh session (resets context)
 ```
 
-Repeat for the personal bot (and any others). Five minutes total. Skippable if you don't care about polish.
+Repeat for each gateway. Five minutes total. Skippable if you don't care about polish.
+
 
 ---
 
@@ -1108,7 +1270,7 @@ If you came here via Orbit, your account already has the Token Plan attached —
 
 ### 5.3 Configure Hermes for MiMo
 
-Edit `~/gateways/work/config.yaml` (the primary; the secondaries pick up the same model unless you override):
+Edit each gateway's `config.yaml` (or just the first one — the others can copy it). The model + auxiliary block is per-gateway, so you can give the work bot the Pro model and the personal bot the Flash model if you want different tiers per voice:
 
 ```yaml
 model:
@@ -1181,7 +1343,7 @@ MiMo is fast, free-ish at the Token Plan tier, and **specifically optimized for 
 
 [Obsidian](https://obsidian.md/) is a free, local-first markdown notes app. It treats a folder of `.md` files as a "vault" and adds powerful linking, search, and graph views on top. Because it's just markdown files, **Hermes can read and write to it directly**.
 
-> **If you went split-brain in [§3.11](#311-choosing-your-pattern-full-share-vs-split-brain), this section is not optional.** Obsidian is your _only_ cross-bot knowledge layer once each gateway has its own isolated `memories/`. The vault is the canon; `MEMORY.md` is scratch. Read on with that frame in mind.
+> **If you went `isolated` or `shared-skills` in [§3.10](#310-sharing-strategies--reference-deep-dive), this section is not optional.** Obsidian is your _only_ cross-bot knowledge layer once each gateway has its own isolated `memories/`. The vault is the canon; `MEMORY.md` is scratch. Read on with that frame in mind.
 
 ### 6.0 What is an Obsidian vault, in plain English?
 
@@ -1335,7 +1497,7 @@ Three reasons, honest:
 
 1. **`MEMORY.md` was getting noisy.** Letting Hermes append every interesting fact to one ever-growing markdown file is fine for a week and chaotic by month two. The LLM Wiki gives the agent a structured place to _graduate_ important facts to, with links instead of scrolling.
 2. **The vault was a passive dumping ground.** Before the LLM Wiki, my Obsidian vault was a one-way street — Hermes wrote to it, I rarely opened it. With the wiki structure (and the schema telling the agent to maintain `index.md` + `log.md`), the vault has a _job_ now, and Obsidian is genuinely useful as a browse-and-curate UI on top of it.
-3. **Multi-gateway makes it 2× better, not 2× more work.** With a single bot, the LLM Wiki is just a nice personal pattern. With several bots sharing one wiki via `OBSIDIAN_VAULT_PATH`, it becomes the _only_ sensible design — because it's the only place where multi-bot durable knowledge can plausibly live without leaking everything via shared `memories/`. It also pairs perfectly with the [split-brain pattern](#311-choosing-your-pattern-full-share-vs-split-brain): isolate the noise, share the canon.
+3. **Multi-gateway makes it 2× better, not 2× more work.** With a single bot, the LLM Wiki is just a nice personal pattern. With several bots sharing one wiki via `OBSIDIAN_VAULT_PATH`, it becomes the _only_ sensible design — because it's the only place where multi-bot durable knowledge can plausibly live without leaking everything via shared `memories/`. It also pairs perfectly with the [`isolated` and `shared-skills` strategies](#310-sharing-strategies--reference-deep-dive): isolate the noise, share the canon.
 
 #### 6.4.7 Setup: scaffold the wiki layout
 
@@ -1568,11 +1730,11 @@ Now: you finish a coding session on your laptop → Claude pushes the summary �
 
 ### Multi-gateway with shared brain
 
-The diagram shows **N bots** sharing one brain. The third gateway (`coach`) is dotted to show it's optional — drop in or remove any number of secondary bots without touching the primary.
+The diagram shows **N bots** with one shared brain (the `shared-both` strategy). The third gateway (`coach`) is dotted to show it's optional — drop in or remove gateways without touching the canonical store.
 
 ![Multi-gateway architecture with Hermes on Hostinger VPS, shared memories and skills via symlink, plus Obsidian, hermes-context, MiMo, and OpenRouter fallback](./images/diagrams/05-multi-gateway-architecture.svg)
 
-**Legend:** plain folder = canonical real folder · `→` = symlink into the primary.
+**Legend:** plain folder = canonical real folder · `→` = symlink into the canonical store. With the `_shared/` layout, the canonical store is `<parent>/_shared/`; in older setups (pre-refactor) it lived inside the "primary" gateway. Both layouts work with the same launcher.
 
 ### Context sync loop
 
@@ -1750,6 +1912,90 @@ Two running checks I keep open: which model is currently serving, and whether Op
 
 ## Troubleshooting
 
+The first 5 items below are the issues that bit me hardest while building this multi-gateway setup. The rest are general operational fixes.
+
+<details>
+<summary><strong>Telegram rejects the bot token (401 Unauthorized) even though I copy-pasted it</strong></summary>
+
+Almost always one of three things:
+
+1. **Wrong length.** A real BotFather token is **45–46 characters** (e.g. `1234567890:AABBccDDeeFFggHHiiJJkkLLmmNNooPPqqRRssTT`). The hardened `run.sh` prints the length on every start (`[gw] token length: 46`) and warns if it isn't in `[45, 46]`. If you see `len 47`, you almost certainly have a `\r` from Windows line endings or a trailing space.
+2. **`\r` from Windows line endings.** If you edited `.env` in Notepad, every line ends in `\r\n` instead of `\n`. The `inject_config.py` strip step now scrubs `\r` and `\n` aggressively, but you can pre-clean too:
+   ```bash
+   sed -i 's/\r$//' ~/gateways/<name>/.env
+   ```
+3. **Stray quotes.** `HERMES_TELEGRAM_BOT_TOKEN="123:abc"` — the quotes sometimes survive into the runtime. Drop them:
+   ```bash
+   HERMES_TELEGRAM_BOT_TOKEN=123:abc
+   ```
+
+</details>
+
+<details>
+<summary><strong>Both gateways using the same token / 409 Conflict from Telegram</strong></summary>
+
+Telegram allows exactly one polling process per token. Two symptoms:
+
+1. **Same token in two `.env` files** — confirm with:
+   ```bash
+   for d in ~/gateways/*/; do echo -n "$(basename "$d"): "; grep '^HERMES_TELEGRAM_BOT_TOKEN=' "$d/.env" | cut -d= -f2 | cut -c1-12; done
+   ```
+   Should print **different** prefixes per gateway. Each bot needs its own BotFather token.
+2. **Env var leaked across gateways** in older `run.sh`. The hardened launcher wraps every gateway in a subshell (`( … )`) so per-gateway env vars never leak into the next gateway's process. If you're still on a pre-refactor `run.sh`, copy the universal one from `templates/run.sh.template` (or run `bootstrap.sh --add` to install it with a `.bak` of the old version).
+
+</details>
+
+<details>
+<summary><strong>Sessions/ or memories/ never get created (empty after first run)</strong></summary>
+
+Three checks:
+
+1. **`HERMES_HOME` not set.** Hermes only writes to its own home. Confirm `run.sh` exports it before `hermes gateway run`:
+   ```bash
+   ps eww $(pgrep -f "hermes gateway" | head -1) | tr ' ' '\n' | grep HERMES_HOME=
+   ```
+   Should print `HERMES_HOME=/path/to/your/gateway`. If empty, your launcher isn't exporting it.
+2. **Permissions.** Some Docker volumes default to `root:root`; if the gateway's process runs as a different UID, writes silently fail:
+   ```bash
+   ls -la ~/gateways/<name>
+   stat -c '%u:%g' ~/gateways/<name>
+   ```
+3. **Wrong `sessions_dir` in `config.yaml`.** The template uses `./sessions` (relative to `HERMES_HOME`). If you hardcoded an absolute path that doesn't exist, Hermes errors silently — fix the path or `mkdir -p` it.
+
+</details>
+
+<details>
+<summary><strong>"No auxiliary LLM provider configured" warning / context lost mid-conversation</strong></summary>
+
+You haven't routed compression and title-generation to a model. Add the `auxiliary:` block in `config.yaml`:
+
+```yaml
+auxiliary:
+  compression:
+    provider: custom:xiaomi-mimo
+    model: mimo-v2.5-pro
+  title_generation:
+    provider: custom:xiaomi-mimo
+    model: mimo-v2.5-pro
+```
+
+Also keep `compression.threshold` reasonable (~0.25 of the context window) so middle context survives long sessions. See [Part 5](#part-5-xiaomi-mimo-free--cheap-inference) for the full block.
+
+</details>
+
+<details>
+<summary><strong>"Not supported model" error from auxiliary tasks</strong></summary>
+
+The compression/title-generation model name doesn't match what the provider actually serves. Check the provider's `/v1/models` endpoint to see valid names:
+
+```bash
+curl -s "$BASE_URL/v1/models" -H "Authorization: Bearer $XIAOMI_MIMO_API_KEY" | jq '.data[].id'
+```
+
+Common gotchas: model name capitalized differently (`mimo-v2.5-pro` ≠ `MiMo-V2.5-Pro`), or you wrote `mimo-v2-flash` when the deployment exposes `mimo-v2.5-flash`. Match the dashboard string exactly.
+
+</details>
+
 <details>
 <summary><strong>"Telegram bot token already in use"</strong></summary>
 
@@ -1758,8 +2004,8 @@ Another gateway is already holding that token. Kill all hermes processes:
 ```bash
 pkill -9 -f "hermes gateway"
 sleep 2
-rm -f ~/gateways/work/gateway.pid ~/gateways/personal/gateway.pid
-./run.sh both
+find ~/gateways -maxdepth 2 -name 'gateway.pid' -delete
+./run.sh all
 ```
 
 </details>

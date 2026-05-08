@@ -1,14 +1,14 @@
 # Shared Handoff
 
 Cross-gateway coordination between bots that otherwise have **isolated brains**
-(split-brain mode — see [§3.11](../../../README.md#311-choosing-your-pattern-full-share-vs-split-brain)).
+(`isolated` or `shared-skills` strategy — see [§"Sharing Strategies"](../../../README.md#sharing-strategies-reference)).
 
 ## Why this folder exists
 
-In split-brain mode each gateway has its own `memories/` and `sessions/`.
-The bots can't read each other's transient context — and that's the point
-(no leakage). But you sometimes *do* want them to coordinate. This folder
-is the explicit, deliberate, file-based bridge.
+When gateways have isolated `memories/` (the `isolated` or `shared-skills`
+strategy), the bots can't read each other's transient context — and that's
+the point (no leakage). But you sometimes *do* want them to coordinate.
+This folder is the explicit, deliberate, file-based bridge.
 
 The pattern:
 
@@ -21,11 +21,17 @@ The pattern:
 ## Convention used in this repo
 
 ```
-shared/
+_shared/
 └── handoff/
     ├── weekend-handoff.md     # work bot writes Friday 6pm; personal bot reads
     └── weekend-notes.md       # personal bot writes Sunday 6pm; work bot reads
 ```
+
+> _Why the underscore?_ Anything in `<parent>/_shared/` is reserved for
+> cross-gateway state that's NOT a gateway itself. The launcher `run.sh`
+> auto-discovers gateways by looking for sibling directories with both
+> `.env` and `config.yaml`, and skips any name starting with `_` so the
+> shared store never gets started as a runaway gateway.
 
 The split is calendrical, not topical:
 
@@ -37,19 +43,19 @@ Different cadence? Change the schedule. Different domains? Rename the files.
 
 ## Wiring it into the bots
 
-Add a skill to the **shared `skills/` folder** (since skills *are* shared in
-split-brain mode) telling each bot what to do with this directory. For example,
-`skills/handoff-protocol.md`:
+Add a skill to the **shared `skills/` folder** (skills are shared in the
+`shared-skills` and `shared-both` strategies) telling each bot what to do
+with this directory. For example, `_shared/skills/handoff-protocol.md`:
 
 ```markdown
 ---
 name: handoff-protocol
-description: Read/write the shared/handoff/ files to coordinate with the other gateway.
+description: Read/write the _shared/handoff/ files to coordinate with the other gateway.
 ---
 
 # Handoff Protocol
 
-Path: `~/gateways/shared/handoff/`
+Path: `~/gateways/_shared/handoff/`
 
 ## When you start a session
 1. List files in handoff/.
