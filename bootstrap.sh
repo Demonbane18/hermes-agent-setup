@@ -26,7 +26,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Bump on every meaningful change so users running `curl ... | bash` can see
 # whether their copy matches the latest.
-BOOTSTRAP_VERSION="0.7.0"
+BOOTSTRAP_VERSION="0.7.1"
 BOOTSTRAP_RELEASED="2026-05-08"
 
 # -----------------------------------------------------------------------------
@@ -439,7 +439,7 @@ arrow_pick() {
         fi
         local lines=0 i
         printf '%s\n' "$title" >&2; lines=$((lines+1))
-        printf '  ↑/↓ move · ← back · Enter select · q cancel    [%d/%d]\n' "$((idx+1))" "$n" >&2
+        printf '  ↑/↓ move · Enter select · q cancel    [%d/%d]\n' "$((idx+1))" "$n" >&2
         lines=$((lines+1))
         for ((i=top; i<top+viewport && i<n; i++)); do
             if [ "$i" = "$idx" ]; then
@@ -490,8 +490,10 @@ arrow_pick() {
                         idx=0; top=0 ;;
                     '[F'|'OF')  # End
                         idx=$((n-1)); _scroll_to_visible ;;
-                    '[D'|'OD')  # Left arrow — back / previous step
-                        trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2; return 2 ;;
+                    '[D'|'OD')  # Left arrow — reserved for text-input cursor in prompts
+                        : ;;     # no-op inside the picker
+                    '[C'|'OC')  # Right arrow — same
+                        : ;;
                     '')          # bare Esc — cancel
                         trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2; return 1 ;;
                 esac ;;
@@ -509,8 +511,6 @@ arrow_pick() {
                 idx=$(( (idx - 1 + n) % n )); _scroll_to_visible ;;
             'j')                  # vim: down
                 idx=$(( (idx + 1) % n )); _scroll_to_visible ;;
-            'h')                  # vim: left = back
-                trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2; return 2 ;;
             'g')                  # vim: home
                 idx=0; top=0 ;;
             'G')                  # vim: end
@@ -569,6 +569,8 @@ pick_model_for() {
         SKIP_LABEL="⏭  Skip (keep current: $current)"
         opts+=("$SKIP_LABEL")
     fi
+    local PREV_LABEL="← Previous step"
+    opts+=("$PREV_LABEL")
 
     # ─── Arrow-key picker (preferred) ─────────────────────────────────────────
     if has_arrow_capability; then
@@ -580,6 +582,8 @@ pick_model_for() {
         fi
         if [ "$arc" = 0 ]; then
             case "$picked" in
+                "$PREV_LABEL")
+                    return 2 ;;
                 "$CUSTOM_LABEL")
                     local nm; nm="$(prompt "Type model id" "$fallback_default")"
                     echo "$nm"; return ;;
@@ -672,14 +676,15 @@ prompt_provider() {
             local P_ZAI="zai          — Z.AI / GLM"
             local P_OLL="ollama       — local Ollama, no API key"
             local P_CUS="custom       — you supply name + base_url + key_env"
+            local P_PREV="← Previous step"
             local picked=""
             if has_arrow_capability; then
                 picked="$(arrow_pick "Default LLM provider" \
                     "$P_MIMO" "$P_OR" "$P_ANT" "$P_OAI" "$P_GEM" \
-                    "$P_GRQ" "$P_DS" "$P_MM" "$P_ZAI" "$P_OLL" "$P_CUS")"
+                    "$P_GRQ" "$P_DS" "$P_MM" "$P_ZAI" "$P_OLL" "$P_CUS" "$P_PREV")"
                 local arc=$?
-                [ "$arc" = 2 ] && return 2
                 [ "$arc" = 0 ] || picked=""
+                [ "$picked" = "$P_PREV" ] && return 2
             fi
             if [ -z "$picked" ]; then
                 {
@@ -1355,12 +1360,13 @@ collect_strategy() {
             local L_ISO="isolated       — each gateway has its own memories/ and skills/  (default)"
             local L_SK="shared-skills  — own memories/, shared skills/  (one skill library, separate memory streams)"
             local L_BOTH="shared-both    — both shared via _shared/  (one logical agent, N voices)"
+            local L_PREV="← Previous step"
             local picked=""
             if has_arrow_capability; then
-                picked="$(arrow_pick "Sharing strategy" "$L_ISO" "$L_SK" "$L_BOTH")"
+                picked="$(arrow_pick "Sharing strategy" "$L_ISO" "$L_SK" "$L_BOTH" "$L_PREV")"
                 local arc=$?
-                [ "$arc" = 2 ] && return 2
                 [ "$arc" = 0 ] || picked=""
+                [ "$picked" = "$L_PREV" ] && return 2
             fi
             if [ -z "$picked" ]; then
                 # Numbered fallback
