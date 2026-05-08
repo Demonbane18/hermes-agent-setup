@@ -26,7 +26,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Bump on every meaningful change so users running `curl ... | bash` can see
 # whether their copy matches the latest.
-BOOTSTRAP_VERSION="0.5.1"
+BOOTSTRAP_VERSION="0.6.0"
 BOOTSTRAP_RELEASED="2026-05-08"
 
 # -----------------------------------------------------------------------------
@@ -380,6 +380,143 @@ yaml_provider_ref() {
     if provider_is_builtin "$1"; then echo "$1"; else echo "custom:$1"; fi
 }
 
+# Detect whether the terminal supports raw mode + ANSI escapes for the arrow
+# picker. Falls back to "no" on dumb terminals, when /dev/tty isn't a real
+# tty, or when stty can't read the current settings.
+has_arrow_capability() {
+    [ "$NON_INTERACTIVE" = 1 ] && return 1
+    [ "$TTY_FD" = "tty" ] || [ "$TTY_FD" = "0" ] || return 1
+    [ "${TERM:-dumb}" != "dumb" ] || return 1
+    stty -g </dev/tty >/dev/null 2>&1 || return 1
+    return 0
+}
+
+# arrow_pick <title> <option>...
+# Interactive arrow-key picker.
+#   ↑/↓ or k/j      move the cursor (with wraparound)
+#   PgUp/PgDn       jump a viewport
+#   Home/End or g/G top / bottom
+#   Enter or Space  select
+#   q or Esc        cancel (returns 1, no output)
+# Echoes the selected option to STDOUT. All UI on STDERR.
+# Falls back: caller should detect "no arrow capability" first via has_arrow_capability.
+arrow_pick() {
+    local title="$1"; shift
+    local options=("$@")
+    local n=${#options[@]}
+    [ "$n" -eq 0 ] && return 1
+
+    local viewport=15
+    [ "$n" -lt "$viewport" ] && viewport="$n"
+
+    local idx=0
+    local top=0   # first visible item
+
+    # Save tty state, set raw mode (no canonical, no echo).
+    local stty_saved
+    if ! stty_saved="$(stty -g </dev/tty 2>/dev/null)"; then
+        return 1
+    fi
+
+    # Hide cursor, switch to raw mode.
+    stty -icanon -echo min 1 time 0 </dev/tty 2>/dev/null
+    printf '\x1b[?25l' >&2
+
+    # Restore handler — must always run so we don't leave the terminal hosed.
+    _arrow_restore() {
+        printf '\x1b[?25h' >&2          # show cursor
+        stty "$stty_saved" </dev/tty 2>/dev/null
+    }
+    trap '_arrow_restore' EXIT
+    trap '_arrow_restore; trap - EXIT INT TERM; return 130' INT TERM
+
+    local rendered_lines=0
+    _arrow_render() {
+        # Erase prior render
+        if [ "$rendered_lines" -gt 0 ]; then
+            printf '\x1b[%dA' "$rendered_lines" >&2
+            printf '\x1b[J' >&2
+        fi
+        local lines=0 i
+        printf '%s\n' "$title" >&2; lines=$((lines+1))
+        printf '  ↑/↓ move · Enter to select · q to cancel    [%d/%d]\n' "$((idx+1))" "$n" >&2
+        lines=$((lines+1))
+        for ((i=top; i<top+viewport && i<n; i++)); do
+            if [ "$i" = "$idx" ]; then
+                printf '\x1b[7m> %s\x1b[0m\n' "${options[$i]}" >&2
+            else
+                printf '  %s\n' "${options[$i]}" >&2
+            fi
+            lines=$((lines+1))
+        done
+        # Pad so erase math is stable when the last viewport is short.
+        local printed=$((i - top))
+        while [ "$printed" -lt "$viewport" ]; do
+            printf '\n' >&2
+            printed=$((printed+1)); lines=$((lines+1))
+        done
+        rendered_lines="$lines"
+    }
+
+    _scroll_to_visible() {
+        if [ "$idx" -lt "$top" ]; then
+            top="$idx"
+        elif [ "$idx" -ge "$((top + viewport))" ]; then
+            top=$((idx - viewport + 1))
+        fi
+    }
+
+    _arrow_render
+    local k1 k2 k3
+    while true; do
+        IFS= read -rsn1 k1 </dev/tty || break
+        case "$k1" in
+            $'\x1b')
+                IFS= read -rsn2 -t 0.05 k2 </dev/tty 2>/dev/null
+                case "$k2" in
+                    '[A'|'OA')  # Up arrow
+                        idx=$(( (idx - 1 + n) % n )); _scroll_to_visible ;;
+                    '[B'|'OB')  # Down arrow
+                        idx=$(( (idx + 1) % n )); _scroll_to_visible ;;
+                    '[5')       # PageUp (followed by ~)
+                        IFS= read -rsn1 -t 0.05 k3 </dev/tty 2>/dev/null
+                        idx=$((idx - viewport)); [ "$idx" -lt 0 ] && idx=0
+                        _scroll_to_visible ;;
+                    '[6')       # PageDown
+                        IFS= read -rsn1 -t 0.05 k3 </dev/tty 2>/dev/null
+                        idx=$((idx + viewport)); [ "$idx" -ge "$n" ] && idx=$((n-1))
+                        _scroll_to_visible ;;
+                    '[H'|'OH')  # Home
+                        idx=0; top=0 ;;
+                    '[F'|'OF')  # End
+                        idx=$((n-1)); _scroll_to_visible ;;
+                    '')          # bare Esc — cancel
+                        trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2; return 1 ;;
+                esac ;;
+            $'\n'|$'\r'|'')      # Enter / NL
+                trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2
+                printf '%s' "${options[$idx]}"
+                return 0 ;;
+            ' ')                  # Space
+                trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2
+                printf '%s' "${options[$idx]}"
+                return 0 ;;
+            'q'|'Q')
+                trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2; return 1 ;;
+            'k')                  # vim: up
+                idx=$(( (idx - 1 + n) % n )); _scroll_to_visible ;;
+            'j')                  # vim: down
+                idx=$(( (idx + 1) % n )); _scroll_to_visible ;;
+            'g')                  # vim: home
+                idx=0; top=0 ;;
+            'G')                  # vim: end
+                idx=$((n-1)); _scroll_to_visible ;;
+        esac
+        _arrow_render
+    done
+    trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2; return 1
+}
+
 # pick_model_for <provider> <current-or-empty>
 # Echoes the chosen model id ON STDOUT (so $(pick_model_for ...) works).
 # All UI — menu, prompts, warnings — goes to STDERR so it's still visible
@@ -407,10 +544,56 @@ pick_model_for() {
         return
     fi
 
+    # Build labelled options array (current/default markers + special entries)
+    local opts=() raw_models=() m label
+    for m in $models; do
+        label="$m"
+        if [ "$m" = "$current" ] && [ "$m" = "$def_model" ]; then
+            label="$m  (current, default)"
+        elif [ "$m" = "$current" ]; then
+            label="$m  (current)"
+        elif [ "$m" = "$def_model" ]; then
+            label="$m  (default)"
+        fi
+        opts+=("$label")
+        raw_models+=("$m")
+    done
+    local CUSTOM_LABEL="✏  Enter custom model name"
+    opts+=("$CUSTOM_LABEL")
+    local SKIP_LABEL=""
+    if [ -n "$current" ]; then
+        SKIP_LABEL="⏭  Skip (keep current: $current)"
+        opts+=("$SKIP_LABEL")
+    fi
+
+    # ─── Arrow-key picker (preferred) ─────────────────────────────────────────
+    if has_arrow_capability; then
+        local picked
+        if picked="$(arrow_pick "Select model for $p (current: ${current:-<unset>})" "${opts[@]}")"; then
+            case "$picked" in
+                "$CUSTOM_LABEL")
+                    local nm; nm="$(prompt "Type model id" "$fallback_default")"
+                    echo "$nm"
+                    return ;;
+                "$SKIP_LABEL")
+                    echo "$current"
+                    return ;;
+                *)
+                    # Strip "  (current)" / "  (default)" suffix back to bare model id
+                    echo "${picked%%  (*}"
+                    return ;;
+            esac
+        fi
+        # User pressed q/Esc — keep the current value (or default if unset)
+        echo "$fallback_default"
+        return
+    fi
+
+    # ─── Numbered fallback (dumb terminal / piped / Windows) ─────────────────
     {
         echo
         echo "Select model for $p (current: ${current:-<unset>}):"
-        local i=1 m label
+        local i=1
         for m in $models; do
             label="$m"
             if [ "$m" = "$current" ] && [ "$m" = "$def_model" ]; then
@@ -434,14 +617,10 @@ pick_model_for() {
         fi
     } >&2
 
-    # Recompute custom_idx + skip_idx outside the redirect block so the rest
-    # of the function (which lives outside the >&2 redirect) can use them.
     local total=0; for m in $models; do total=$((total+1)); done
     local custom_idx=$((total + 1))
     local skip_idx=""
     [ -n "$current" ] && skip_idx=$((custom_idx + 1))
-
-    # Default selection: index of current OR 1 (first/default)
     local default_sel="1"
     if [ -n "$current" ]; then
         local idx=1
