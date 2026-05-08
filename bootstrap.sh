@@ -26,7 +26,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Bump on every meaningful change so users running `curl ... | bash` can see
 # whether their copy matches the latest.
-BOOTSTRAP_VERSION="0.4.0"
+BOOTSTRAP_VERSION="0.5.0"
 BOOTSTRAP_RELEASED="2026-05-08"
 
 # -----------------------------------------------------------------------------
@@ -349,7 +349,14 @@ provider_info() {
 provider_models() {
     case "$1" in
         xiaomi-mimo) echo "mimo-v2.5-pro mimo-v2-flash" ;;
-        openrouter)  echo "anthropic/claude-sonnet-4 anthropic/claude-opus-4 minimax/minimax-m2.7 openai/gpt-4o google/gemini-2.5-pro meta-llama/llama-3.3-70b-instruct deepseek/deepseek-chat" ;;
+        openrouter)
+            # Mirrors the live model list visible in Hermes Agent's own
+            # `hermes config` model picker as of script release date. Pricing
+            # changes constantly — this list is just for the picker UI.
+            # Provider mints/deprecates models often; pick "(type your own)"
+            # for anything missing or browse https://openrouter.ai/models.
+            echo "anthropic/claude-opus-4.6 anthropic/claude-sonnet-4.6 anthropic/claude-sonnet-4.5 anthropic/claude-haiku-4.5 anthropic/claude-opus-4 anthropic/claude-sonnet-4 openai/gpt-5.4 openai/gpt-5.4-mini openai/gpt-5.4-pro openai/gpt-5.4-nano openai/gpt-5.3-codex openai/gpt-4o openai/gpt-4o-mini openai/o1 openai/o3-mini google/gemini-3-pro-image-preview google/gemini-3-flash-preview google/gemini-3.1-pro-preview google/gemini-3.1-flash-lite-preview google/gemini-2.5-pro google/gemini-2.5-flash xiaomi/mimo-v2-pro qwen/qwen3.6-plus qwen/qwen3.5-plus-02-15 qwen/qwen3.5-35b-a3b minimax/minimax-m2.7 minimax/minimax-m2.5 z-ai/glm-5.1 z-ai/glm-5v-turbo z-ai/glm-5-turbo moonshotai/kimi-k2.5 x-ai/grok-4.20 stepfun/step-3.5-flash deepseek/deepseek-chat deepseek/deepseek-reasoner nvidia/nemotron-3-super-120b-a12b nvidia/nemotron-3-super-120b-a12b:free arcee-ai/trinity-large-thinking meta-llama/llama-3.3-70b-instruct"
+            ;;
         anthropic)   echo "claude-opus-4-7 claude-sonnet-4-6 claude-haiku-4-5" ;;
         openai)      echo "gpt-4o gpt-4o-mini o1 o3-mini" ;;
         gemini)      echo "gemini-2.5-pro gemini-2.5-flash" ;;
@@ -371,6 +378,83 @@ provider_is_builtin() {
 
 yaml_provider_ref() {
     if provider_is_builtin "$1"; then echo "$1"; else echo "custom:$1"; fi
+}
+
+# pick_model_for <provider> <current-or-empty>
+# Echoes the chosen model id. Numbered list of models, plus
+# "Enter custom model name" and (when current is non-empty) "Skip (keep current)".
+# Marks the current selection with "(current)" and the registry default with "(default)".
+pick_model_for() {
+    local p="$1" current="${2:-}"
+    local def_info; def_info="$(provider_info "$p" 2>/dev/null || echo "|||0")"
+    local def_model; IFS='|' read -r def_model _ _ _ <<<"$def_info"
+    # OpenRouter's registry default is empty by design — substitute a sensible one
+    if [ -z "$def_model" ] && [ "$p" = "openrouter" ]; then
+        def_model="anthropic/claude-sonnet-4.6"
+    fi
+    local fallback_default="${current:-$def_model}"
+
+    if [ "$NON_INTERACTIVE" = 1 ]; then
+        echo "$fallback_default"
+        return
+    fi
+
+    local models; models="$(provider_models "$p")"
+    if [ -z "$models" ]; then
+        local nm; nm="$(prompt "Model id" "$fallback_default")"
+        echo "$nm"
+        return
+    fi
+
+    echo
+    echo "Select model for $p (current: ${current:-<unset>}):"
+    local i=1 m label
+    for m in $models; do
+        label="$m"
+        if [ "$m" = "$current" ] && [ "$m" = "$def_model" ]; then
+            label="$m  (current, default)"
+        elif [ "$m" = "$current" ]; then
+            label="$m  (current)"
+        elif [ "$m" = "$def_model" ]; then
+            label="$m  (default)"
+        fi
+        printf "  %2d) %s\n" "$i" "$label"
+        i=$((i+1))
+    done
+    local custom_idx="$i"
+    printf "  %2d) Enter custom model name\n" "$custom_idx"
+    i=$((i+1))
+    local skip_idx=""
+    if [ -n "$current" ]; then
+        skip_idx="$i"
+        printf "  %2d) Skip (keep current: %s)\n" "$skip_idx" "$current"
+        i=$((i+1))
+    fi
+    # Default selection: index of current OR 1 (first/default)
+    local default_sel="1"
+    if [ -n "$current" ]; then
+        local idx=1
+        for m in $models; do
+            [ "$m" = "$current" ] && { default_sel="$idx"; break; }
+            idx=$((idx+1))
+        done
+    fi
+    local sel; sel="$(prompt "Pick" "$default_sel")"
+    if [[ "$sel" =~ ^[0-9]+$ ]]; then
+        if [ "$sel" -ge 1 ] && [ "$sel" -lt "$custom_idx" ]; then
+            echo "$(echo "$models" | awk -v n="$sel" '{print $n}')"
+            return
+        elif [ "$sel" = "$custom_idx" ]; then
+            local nm; nm="$(prompt "Type model id" "$fallback_default")"
+            echo "$nm"
+            return
+        elif [ -n "$skip_idx" ] && [ "$sel" = "$skip_idx" ]; then
+            echo "$current"
+            return
+        fi
+    fi
+    warn "invalid pick — keeping ${current:-default}"
+    echo "$fallback_default"
 }
 
 # Resolve PROVIDER, MODEL, BASE_URL, KEY_ENV, FALLBACK_PROVIDER, FALLBACK_MODEL.
@@ -441,26 +525,7 @@ EOF
 
         # Model
         if [ -z "$MODEL" ]; then
-            if [ "$NON_INTERACTIVE" = 1 ]; then
-                MODEL="$def_model"
-            else
-                local models; models="$(provider_models "$PROVIDER")"
-                if [ -n "$models" ]; then
-                    echo
-                    echo "Models for $PROVIDER (hard-coded list — check the provider's /v1/models for newest):"
-                    local i=1 m
-                    for m in $models; do printf "  %2d) %s\n" "$i" "$m"; i=$((i+1)); done
-                    printf "  %2d) (type your own)\n" "$i"
-                    local sel; sel="$(prompt "Pick (default 1)" "1")"
-                    if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -lt "$i" ]; then
-                        MODEL="$(echo "$models" | awk -v n="$sel" '{print $n}')"
-                    else
-                        MODEL="$(prompt "Type model id" "$def_model")"
-                    fi
-                else
-                    MODEL="$def_model"
-                fi
-            fi
+            MODEL="$(pick_model_for "$PROVIDER" "")"
         fi
 
         # Base URL (skip for built-in providers — they don't need one)
@@ -505,33 +570,7 @@ EOF
 
     if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ]; then
         if [ -z "$FALLBACK_MODEL" ]; then
-            local fb_info; fb_info="$(provider_info "$FALLBACK_PROVIDER" 2>/dev/null)" \
-                || die "unknown fallback provider: $FALLBACK_PROVIDER"
-            local fb_def_model
-            IFS='|' read -r fb_def_model _ _ _ <<<"$fb_info"
-            # Sensible default if the registry has none (e.g. openrouter)
-            [ -z "$fb_def_model" ] && [ "$FALLBACK_PROVIDER" = "openrouter" ] && fb_def_model="anthropic/claude-sonnet-4"
-
-            if [ "$NON_INTERACTIVE" = 1 ]; then
-                FALLBACK_MODEL="${fb_def_model:-$MODEL}"
-            else
-                local fb_models; fb_models="$(provider_models "$FALLBACK_PROVIDER")"
-                if [ -n "$fb_models" ]; then
-                    echo
-                    echo "Fallback models for $FALLBACK_PROVIDER:"
-                    local i=1 m
-                    for m in $fb_models; do printf "  %2d) %s\n" "$i" "$m"; i=$((i+1)); done
-                    printf "  %2d) (type your own)\n" "$i"
-                    local sel; sel="$(prompt "Pick fallback model (default 1)" "1")"
-                    if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -lt "$i" ]; then
-                        FALLBACK_MODEL="$(echo "$fb_models" | awk -v n="$sel" '{print $n}')"
-                    else
-                        FALLBACK_MODEL="$(prompt "Type fallback model id" "${fb_def_model:-$MODEL}")"
-                    fi
-                else
-                    FALLBACK_MODEL="$(prompt "Fallback model id" "${fb_def_model:-$MODEL}")"
-                fi
-            fi
+            FALLBACK_MODEL="$(pick_model_for "$FALLBACK_PROVIDER" "")"
         fi
     fi
 
@@ -1120,11 +1159,16 @@ EOF
         2)  NAMES_RAW=""; COUNT="";                                         collect_names ;;
         3)  STRATEGY="";                                                    collect_strategy ;;
         4)  PROVIDER=""; MODEL=""; BASE_URL=""; KEY_ENV="";                  prompt_provider ;;
-        5)  MODEL="";                                                       prompt_provider ;;
+        5)  MODEL="$(pick_model_for "$PROVIDER" "$MODEL")" ;;
         6)  BASE_URL="";                                                    prompt_provider ;;
         7)  KEY_ENV="";                                                     prompt_provider ;;
         8)  FALLBACK_PROVIDER=""; FALLBACK_MODEL="";                        prompt_provider ;;
-        9)  FALLBACK_MODEL="";                                              prompt_provider ;;
+        9)  if [ -n "$FALLBACK_PROVIDER" ] && [ "$FALLBACK_PROVIDER" != "none" ]; then
+                FALLBACK_MODEL="$(pick_model_for "$FALLBACK_PROVIDER" "$FALLBACK_MODEL")"
+            else
+                warn "no fallback provider configured — pick option 8 first"
+            fi
+            ;;
         10) die "aborted" ;;
         *)  warn "invalid pick: ${sel:-(empty)} — try again" ;;
     esac
@@ -1236,11 +1280,16 @@ EOF
         1)  NAMES_RAW=""; COUNT="";                                         collect_names_for_add "$parent" ;;
         2)  STRATEGY="";                                                    collect_strategy ;;
         3)  PROVIDER=""; MODEL=""; BASE_URL=""; KEY_ENV="";                  prompt_provider ;;
-        4)  MODEL="";                                                       prompt_provider ;;
+        4)  MODEL="$(pick_model_for "$PROVIDER" "$MODEL")" ;;
         5)  BASE_URL="";                                                    prompt_provider ;;
         6)  KEY_ENV="";                                                     prompt_provider ;;
         7)  FALLBACK_PROVIDER=""; FALLBACK_MODEL="";                        prompt_provider ;;
-        8)  FALLBACK_MODEL="";                                              prompt_provider ;;
+        8)  if [ -n "$FALLBACK_PROVIDER" ] && [ "$FALLBACK_PROVIDER" != "none" ]; then
+                FALLBACK_MODEL="$(pick_model_for "$FALLBACK_PROVIDER" "$FALLBACK_MODEL")"
+            else
+                warn "no fallback provider configured — pick option 7 first"
+            fi
+            ;;
         9)  die "aborted" ;;
         *)  warn "invalid pick: ${sel:-(empty)} — try again" ;;
     esac
