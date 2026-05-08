@@ -26,7 +26,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Bump on every meaningful change so users running `curl ... | bash` can see
 # whether their copy matches the latest.
-BOOTSTRAP_VERSION="0.5.0"
+BOOTSTRAP_VERSION="0.5.1"
 BOOTSTRAP_RELEASED="2026-05-08"
 
 # -----------------------------------------------------------------------------
@@ -381,8 +381,9 @@ yaml_provider_ref() {
 }
 
 # pick_model_for <provider> <current-or-empty>
-# Echoes the chosen model id. Numbered list of models, plus
-# "Enter custom model name" and (when current is non-empty) "Skip (keep current)".
+# Echoes the chosen model id ON STDOUT (so $(pick_model_for ...) works).
+# All UI — menu, prompts, warnings — goes to STDERR so it's still visible
+# to the user when the function is called inside a command substitution.
 # Marks the current selection with "(current)" and the registry default with "(default)".
 pick_model_for() {
     local p="$1" current="${2:-}"
@@ -406,30 +407,40 @@ pick_model_for() {
         return
     fi
 
-    echo
-    echo "Select model for $p (current: ${current:-<unset>}):"
-    local i=1 m label
-    for m in $models; do
-        label="$m"
-        if [ "$m" = "$current" ] && [ "$m" = "$def_model" ]; then
-            label="$m  (current, default)"
-        elif [ "$m" = "$current" ]; then
-            label="$m  (current)"
-        elif [ "$m" = "$def_model" ]; then
-            label="$m  (default)"
+    {
+        echo
+        echo "Select model for $p (current: ${current:-<unset>}):"
+        local i=1 m label
+        for m in $models; do
+            label="$m"
+            if [ "$m" = "$current" ] && [ "$m" = "$def_model" ]; then
+                label="$m  (current, default)"
+            elif [ "$m" = "$current" ]; then
+                label="$m  (current)"
+            elif [ "$m" = "$def_model" ]; then
+                label="$m  (default)"
+            fi
+            printf "  %2d) %s\n" "$i" "$label"
+            i=$((i+1))
+        done
+        local custom_idx="$i"
+        printf "  %2d) Enter custom model name\n" "$custom_idx"
+        i=$((i+1))
+        local skip_idx=""
+        if [ -n "$current" ]; then
+            skip_idx="$i"
+            printf "  %2d) Skip (keep current: %s)\n" "$skip_idx" "$current"
+            i=$((i+1))
         fi
-        printf "  %2d) %s\n" "$i" "$label"
-        i=$((i+1))
-    done
-    local custom_idx="$i"
-    printf "  %2d) Enter custom model name\n" "$custom_idx"
-    i=$((i+1))
+    } >&2
+
+    # Recompute custom_idx + skip_idx outside the redirect block so the rest
+    # of the function (which lives outside the >&2 redirect) can use them.
+    local total=0; for m in $models; do total=$((total+1)); done
+    local custom_idx=$((total + 1))
     local skip_idx=""
-    if [ -n "$current" ]; then
-        skip_idx="$i"
-        printf "  %2d) Skip (keep current: %s)\n" "$skip_idx" "$current"
-        i=$((i+1))
-    fi
+    [ -n "$current" ] && skip_idx=$((custom_idx + 1))
+
     # Default selection: index of current OR 1 (first/default)
     local default_sel="1"
     if [ -n "$current" ]; then
@@ -442,7 +453,7 @@ pick_model_for() {
     local sel; sel="$(prompt "Pick" "$default_sel")"
     if [[ "$sel" =~ ^[0-9]+$ ]]; then
         if [ "$sel" -ge 1 ] && [ "$sel" -lt "$custom_idx" ]; then
-            echo "$(echo "$models" | awk -v n="$sel" '{print $n}')"
+            echo "$models" | awk -v n="$sel" '{print $n}'
             return
         elif [ "$sel" = "$custom_idx" ]; then
             local nm; nm="$(prompt "Type model id" "$fallback_default")"
