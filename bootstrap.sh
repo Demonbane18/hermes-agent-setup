@@ -26,7 +26,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Bump on every meaningful change so users running `curl ... | bash` can see
 # whether their copy matches the latest.
-BOOTSTRAP_VERSION="0.3.0"
+BOOTSTRAP_VERSION="0.4.0"
 BOOTSTRAP_RELEASED="2026-05-08"
 
 # -----------------------------------------------------------------------------
@@ -349,7 +349,7 @@ provider_info() {
 provider_models() {
     case "$1" in
         xiaomi-mimo) echo "mimo-v2.5-pro mimo-v2-flash" ;;
-        openrouter)  echo "anthropic/claude-sonnet-4 anthropic/claude-opus-4 openai/gpt-4o google/gemini-2.5-pro meta-llama/llama-3.3-70b-instruct" ;;
+        openrouter)  echo "anthropic/claude-sonnet-4 anthropic/claude-opus-4 minimax/minimax-m2.7 openai/gpt-4o google/gemini-2.5-pro meta-llama/llama-3.3-70b-instruct deepseek/deepseek-chat" ;;
         anthropic)   echo "claude-opus-4-7 claude-sonnet-4-6 claude-haiku-4-5" ;;
         openai)      echo "gpt-4o gpt-4o-mini o1 o3-mini" ;;
         gemini)      echo "gemini-2.5-pro gemini-2.5-flash" ;;
@@ -509,10 +509,28 @@ EOF
                 || die "unknown fallback provider: $FALLBACK_PROVIDER"
             local fb_def_model
             IFS='|' read -r fb_def_model _ _ _ <<<"$fb_info"
-            FALLBACK_MODEL="${fb_def_model:-$MODEL}"
-            # OpenRouter routes to Anthropic models by default if primary is custom
-            if [ "$FALLBACK_PROVIDER" = "openrouter" ] && [ -z "$fb_def_model" ]; then
-                FALLBACK_MODEL="anthropic/claude-sonnet-4"
+            # Sensible default if the registry has none (e.g. openrouter)
+            [ -z "$fb_def_model" ] && [ "$FALLBACK_PROVIDER" = "openrouter" ] && fb_def_model="anthropic/claude-sonnet-4"
+
+            if [ "$NON_INTERACTIVE" = 1 ]; then
+                FALLBACK_MODEL="${fb_def_model:-$MODEL}"
+            else
+                local fb_models; fb_models="$(provider_models "$FALLBACK_PROVIDER")"
+                if [ -n "$fb_models" ]; then
+                    echo
+                    echo "Fallback models for $FALLBACK_PROVIDER:"
+                    local i=1 m
+                    for m in $fb_models; do printf "  %2d) %s\n" "$i" "$m"; i=$((i+1)); done
+                    printf "  %2d) (type your own)\n" "$i"
+                    local sel; sel="$(prompt "Pick fallback model (default 1)" "1")"
+                    if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -lt "$i" ]; then
+                        FALLBACK_MODEL="$(echo "$fb_models" | awk -v n="$sel" '{print $n}')"
+                    else
+                        FALLBACK_MODEL="$(prompt "Type fallback model id" "${fb_def_model:-$MODEL}")"
+                    fi
+                else
+                    FALLBACK_MODEL="$(prompt "Fallback model id" "${fb_def_model:-$MODEL}")"
+                fi
             fi
         fi
     fi
@@ -1002,36 +1020,42 @@ ensure_universal_script() {
 # -----------------------------------------------------------------------------
 # Mode A — fresh setup
 # -----------------------------------------------------------------------------
-mode_a_fresh() {
-    log "Mode A — fresh setup"
-
+# -----------------------------------------------------------------------------
+# Single-purpose collectors. Each prompts only when the relevant variable is
+# empty. Calling again with the var cleared re-prompts — that's what makes the
+# Proceed-loop edit menu work.
+# -----------------------------------------------------------------------------
+collect_parent() {
     if [ -z "$PARENT" ]; then
         PARENT="$(prompt "Parent folder" "$HOME/gateways")"
     fi
     PARENT="$(realpath -m "$PARENT")"
+}
 
-    local names=()
-    if [ -n "$NAMES_RAW" ]; then
-        IFS=',' read -ra names <<<"$NAMES_RAW"
-    elif [ -n "$COUNT" ]; then
-        local i
-        for ((i=1; i<=COUNT; i++)); do names+=("gateway-$i"); done
-    else
-        local n; n="$(prompt "How many gateways?" "2")"
+collect_names() {
+    if [ -z "$NAMES_RAW" ]; then
+        local n
+        if [ -n "$COUNT" ]; then
+            n="$COUNT"
+        else
+            n="$(prompt "How many gateways?" "2")"
+        fi
         [[ "$n" =~ ^[0-9]+$ ]] || die "count must be a positive integer"
-        local i nm default
+        local i nm default names_raw=""
         for ((i=1; i<=n; i++)); do
             default="gateway-$i"
             nm="$(prompt "Name for gateway $i" "$default")"
-            names+=("$nm")
+            names_raw+="${names_raw:+,}$nm"
         done
+        NAMES_RAW="$names_raw"
     fi
+    local nm; local _names
+    IFS=',' read -ra _names <<<"$NAMES_RAW"
+    [ ${#_names[@]} -ge 1 ] || die "no gateway names provided"
+    for nm in "${_names[@]}"; do validate_name "$nm"; done
+}
 
-    [ ${#names[@]} -ge 1 ] || die "no gateway names provided"
-
-    local nm
-    for nm in "${names[@]}"; do validate_name "$nm"; done
-
+collect_strategy() {
     if [ -z "$STRATEGY" ]; then
         if [ "$NON_INTERACTIVE" = 1 ]; then
             STRATEGY="isolated"
@@ -1047,28 +1071,87 @@ Sharing strategy:
 EOF
             sel="$(prompt "Choose 1/2/3" "1")"
             case "$sel" in
-                1|isolated)         STRATEGY="isolated" ;;
+                1|isolated)             STRATEGY="isolated" ;;
                 2|skills|shared-skills) STRATEGY="shared-skills" ;;
-                3|both|shared-both) STRATEGY="shared-both" ;;
+                3|both|shared-both)     STRATEGY="shared-both" ;;
                 *) die "invalid choice: $sel" ;;
             esac
         fi
     fi
     STRATEGY="$(normalize_strategy "$STRATEGY")"
+}
 
-    prompt_provider
-
+# -----------------------------------------------------------------------------
+# Plan display + edit menus
+# -----------------------------------------------------------------------------
+show_plan_a() {
+    local _names; _names="$(echo "$NAMES_RAW" | tr ',' ' ')"
     log "Plan:"
     log "  parent:   $PARENT"
-    log "  gateways: ${names[*]}"
+    log "  gateways: $_names"
     log "  strategy: $STRATEGY"
-    log "  provider: $PROVIDER ($MODEL)${FALLBACK_PROVIDER:+ -> fallback $FALLBACK_PROVIDER ($FALLBACK_MODEL)}"
-    log "  templates: $([ -d "${SCRIPT_DIR:-/nope}/templates" ] && echo "local ($SCRIPT_DIR/templates)" || echo "remote ($REPO_URL)")"
-
-    if [ "$NON_INTERACTIVE" = 0 ] && [ "$DRY_RUN" = 0 ]; then
-        local ok; ok="$(confirm "Proceed?" "Y")"
-        [[ "$ok" =~ ^[Yy] ]] || die "aborted"
+    if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ]; then
+        log "  provider: $PROVIDER ($MODEL) -> fallback $FALLBACK_PROVIDER ($FALLBACK_MODEL)"
+    else
+        log "  provider: $PROVIDER ($MODEL)  [no fallback]"
     fi
+    log "  templates: $([ -d "${SCRIPT_DIR:-/nope}/templates" ] && echo "local ($SCRIPT_DIR/templates)" || echo "remote ($REPO_URL)")"
+}
+
+edit_menu_a() {
+    cat <<'EOF'
+
+What do you want to change?
+   1) Parent folder
+   2) Gateway names / count
+   3) Sharing strategy
+   4) Default LLM provider  (re-picks model + base URL + key env)
+   5) Default model only    (keep the current provider)
+   6) Default base URL      (MiMo region or custom provider URL)
+   7) Default key env var   (e.g. ANTHROPIC_API_KEY)
+   8) Fallback provider     (re-picks fallback model)
+   9) Fallback model only   (keep the current fallback provider)
+  10) Cancel — exit without making changes
+
+EOF
+    local sel; sel="$(prompt "Pick (1-10)" "")"
+    case "$sel" in
+        1)  PARENT="";                                                      collect_parent ;;
+        2)  NAMES_RAW=""; COUNT="";                                         collect_names ;;
+        3)  STRATEGY="";                                                    collect_strategy ;;
+        4)  PROVIDER=""; MODEL=""; BASE_URL=""; KEY_ENV="";                  prompt_provider ;;
+        5)  MODEL="";                                                       prompt_provider ;;
+        6)  BASE_URL="";                                                    prompt_provider ;;
+        7)  KEY_ENV="";                                                     prompt_provider ;;
+        8)  FALLBACK_PROVIDER=""; FALLBACK_MODEL="";                        prompt_provider ;;
+        9)  FALLBACK_MODEL="";                                              prompt_provider ;;
+        10) die "aborted" ;;
+        *)  warn "invalid pick: ${sel:-(empty)} — try again" ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+# Mode A — fresh setup
+# -----------------------------------------------------------------------------
+mode_a_fresh() {
+    log "Mode A — fresh setup"
+
+    collect_parent
+    collect_names
+    collect_strategy
+    prompt_provider
+
+    while true; do
+        echo
+        show_plan_a
+        if [ "$NON_INTERACTIVE" = 1 ] || [ "$DRY_RUN" = 1 ]; then
+            break
+        fi
+        if yes_no "Proceed?" "Y"; then
+            break
+        fi
+        edit_menu_a
+    done
 
     op "mkdir -p $PARENT"
     [ "$DRY_RUN" = 1 ] || mkdir -p "$PARENT"
@@ -1077,11 +1160,90 @@ EOF
     ensure_universal_script "$PARENT" "run.sh.template"          "run.sh"
     ensure_universal_script "$PARENT" "inject_config.py.template" "inject_config.py"
 
+    local names; IFS=',' read -ra names <<<"$NAMES_RAW"
+    local nm
     for nm in "${names[@]}"; do
         build_gateway "$PARENT" "$nm" "$STRATEGY"
     done
 
     print_next_steps "$PARENT" "${names[@]}"
+}
+
+# -----------------------------------------------------------------------------
+# Mode B — extend existing setup
+# -----------------------------------------------------------------------------
+# Mode B-specific name collector — different default ("how many NEW") and
+# rejects names that already exist under the chosen parent.
+collect_names_for_add() {
+    local parent="$1"
+    if [ -z "$NAMES_RAW" ]; then
+        if [ "$NON_INTERACTIVE" = 1 ]; then
+            die "--names required for --add in non-interactive mode"
+        fi
+        local n; n="$(prompt "How many new gateways to add?" "1")"
+        [[ "$n" =~ ^[0-9]+$ ]] || die "count must be a positive integer"
+        local i nm names_raw=""
+        for ((i=1; i<=n; i++)); do
+            nm="$(prompt "Name for new gateway $i" "")"
+            [ -n "$nm" ] || die "empty gateway name"
+            names_raw+="${names_raw:+,}$nm"
+        done
+        NAMES_RAW="$names_raw"
+    fi
+    local _names nm
+    IFS=',' read -ra _names <<<"$NAMES_RAW"
+    [ ${#_names[@]} -ge 1 ] || die "no gateway names provided"
+    for nm in "${_names[@]}"; do
+        validate_name "$nm"
+        if [ -d "$parent/$nm" ]; then
+            die "gateway '$nm' already exists at $parent/$nm — pick a different name"
+        fi
+    done
+}
+
+show_plan_b() {
+    local parent="$1"
+    local _names; _names="$(echo "$NAMES_RAW" | tr ',' ' ')"
+    log "Plan:"
+    log "  parent:   $parent (existing — won't touch existing gateways)"
+    log "  add:      $_names"
+    log "  strategy: $STRATEGY"
+    if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ]; then
+        log "  provider: $PROVIDER ($MODEL) -> fallback $FALLBACK_PROVIDER ($FALLBACK_MODEL)"
+    else
+        log "  provider: $PROVIDER ($MODEL)  [no fallback]"
+    fi
+}
+
+edit_menu_b() {
+    local parent="$1"
+    cat <<'EOF'
+
+What do you want to change?
+   1) Gateway names / count       (which new gateways to add)
+   2) Sharing strategy override   (warning: existing gateways stay as-is)
+   3) Default LLM provider        (re-picks model + base URL + key env)
+   4) Default model only          (keep the current provider)
+   5) Default base URL            (MiMo region or custom provider URL)
+   6) Default key env var
+   7) Fallback provider           (re-picks fallback model)
+   8) Fallback model only         (keep the current fallback provider)
+   9) Cancel — exit without making changes
+
+EOF
+    local sel; sel="$(prompt "Pick (1-9)" "")"
+    case "$sel" in
+        1)  NAMES_RAW=""; COUNT="";                                         collect_names_for_add "$parent" ;;
+        2)  STRATEGY="";                                                    collect_strategy ;;
+        3)  PROVIDER=""; MODEL=""; BASE_URL=""; KEY_ENV="";                  prompt_provider ;;
+        4)  MODEL="";                                                       prompt_provider ;;
+        5)  BASE_URL="";                                                    prompt_provider ;;
+        6)  KEY_ENV="";                                                     prompt_provider ;;
+        7)  FALLBACK_PROVIDER=""; FALLBACK_MODEL="";                        prompt_provider ;;
+        8)  FALLBACK_MODEL="";                                              prompt_provider ;;
+        9)  die "aborted" ;;
+        *)  warn "invalid pick: ${sel:-(empty)} — try again" ;;
+    esac
 }
 
 # -----------------------------------------------------------------------------
@@ -1100,8 +1262,7 @@ mode_b_add() {
                 die "could not auto-detect strategy; pass --strategy explicitly"
             fi
             log "couldn't auto-detect strategy from existing gateways"
-            local sel; sel="$(prompt "Strategy (isolated|shared-skills|shared-both)" "isolated")"
-            STRATEGY="$(normalize_strategy "$sel")"
+            collect_strategy
         else
             STRATEGY="$detected"
         fi
@@ -1113,54 +1274,32 @@ mode_b_add() {
         fi
     fi
 
-    # Detect old shared/ -> _shared/ migration suggestion
+    # Old shared/ -> _shared/ migration hint
     if [ -d "$parent/shared" ] && [ ! -d "$parent/_shared" ]; then
         warn "found old layout: $parent/shared/ — consider 'mv $parent/shared $parent/_shared' (not done automatically)"
     fi
 
-    if [ -z "$NAMES_RAW" ]; then
-        if [ "$NON_INTERACTIVE" = 1 ]; then
-            die "--names required for --add in non-interactive mode"
-        fi
-        local n; n="$(prompt "How many new gateways to add?" "1")"
-        [[ "$n" =~ ^[0-9]+$ ]] || die "count must be a positive integer"
-        local i nm names_raw=""
-        for ((i=1; i<=n; i++)); do
-            nm="$(prompt "Name for new gateway $i" "")"
-            [ -n "$nm" ] || die "empty gateway name"
-            names_raw+="${names_raw:+,}$nm"
-        done
-        NAMES_RAW="$names_raw"
-    fi
-
-    local names=()
-    IFS=',' read -ra names <<<"$NAMES_RAW"
-    local nm
-    for nm in "${names[@]}"; do
-        validate_name "$nm"
-        if [ -d "$parent/$nm" ]; then
-            die "gateway '$nm' already exists at $parent/$nm — pick a different name"
-        fi
-    done
-
-    log "Plan:"
-    log "  parent:   $parent"
-    log "  add:      ${names[*]}"
-    log "  strategy: $STRATEGY"
-
+    collect_names_for_add "$parent"
     prompt_provider
 
-    log "  provider: $PROVIDER ($MODEL)${FALLBACK_PROVIDER:+ -> fallback $FALLBACK_PROVIDER ($FALLBACK_MODEL)}"
-
-    if [ "$NON_INTERACTIVE" = 0 ] && [ "$DRY_RUN" = 0 ]; then
-        local ok; ok="$(confirm "Proceed?" "Y")"
-        [[ "$ok" =~ ^[Yy] ]] || die "aborted"
-    fi
+    while true; do
+        echo
+        show_plan_b "$parent"
+        if [ "$NON_INTERACTIVE" = 1 ] || [ "$DRY_RUN" = 1 ]; then
+            break
+        fi
+        if yes_no "Proceed?" "Y"; then
+            break
+        fi
+        edit_menu_b "$parent"
+    done
 
     ensure_shared_dirs "$parent" "$STRATEGY"
     ensure_universal_script "$parent" "run.sh.template"          "run.sh"
     ensure_universal_script "$parent" "inject_config.py.template" "inject_config.py"
 
+    local names; IFS=',' read -ra names <<<"$NAMES_RAW"
+    local nm
     for nm in "${names[@]}"; do
         build_gateway "$parent" "$nm" "$STRATEGY"
     done
