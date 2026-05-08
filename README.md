@@ -10,9 +10,64 @@
 [![Telegram](https://img.shields.io/badge/chat-Telegram-26A5E4)](https://t.me/BotFather)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[**Quickstart**](#quickstart-tldr) · [**Why this repo**](#why-this-guide-exists) · [**Step-by-step**](#part-1-spin-up-the-vps-with-hostingers-one-click-install) · [**Add Nth bot**](#311-adding-a-new-gateway-later) · [**Architecture**](#architecture-diagrams) · [**Troubleshooting**](#troubleshooting)
+[**Quick Install**](#quick-install) · [**Getting Started**](#getting-started) · [**Why this repo**](#why-this-guide-exists) · [**Step-by-step**](#part-1-spin-up-the-vps-with-hostingers-one-click-install) · [**Providers**](#314-llm-provider-reference) · [**Troubleshooting**](#troubleshooting)
 
 </div>
+
+---
+
+## Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Demonbane18/hermes-agent-setup/main/bootstrap.sh | bash
+```
+
+Works on any Linux/macOS/WSL2 VPS that has the [Hermes Agent](https://github.com/NousResearch/hermes-agent) CLI installed. The bootstrap walks you through **parent folder → gateway names → sharing strategy → LLM provider → model** and writes everything in place. Existing files are never overwritten and you confirm before anything is created.
+
+> **No Hermes CLI yet?** Install it first with the upstream one-liner:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+> ```
+>
+> Then re-run the bootstrap above. Bare-metal walkthrough lives in [Manual install fallback](#manual-install-fallback); the Hostinger 1-click path lives in [Part 1](#part-1-spin-up-the-vps-with-hostingers-one-click-install).
+
+> **Already have a `~/gateways/` setup?** The bootstrap detects it and offers to **extend it** (add more bots, auto-inheriting your strategy + provider) or **create a separate brand-new parent folder** so your existing one stays untouched.
+
+After installation:
+
+```bash
+cd ~/gateways                          # or whichever parent you chose
+$EDITOR <gateway>/.env                 # paste your BotFather token + API keys
+./run.sh all                           # start every discovered gateway
+```
+
+## Getting Started
+
+Once your gateways are running, everything lives in `<parent>/run.sh`:
+
+```bash
+./run.sh                               # start every discovered gateway (alias of all)
+./run.sh list                          # list discovered gateway names
+./run.sh status                        # show running PIDs + which gateway each serves
+./run.sh stop                          # stop every gateway
+./run.sh stop <name>                   # stop one gateway
+./run.sh <name>                        # start one gateway in the foreground
+./run.sh --help                        # full help
+
+# Add another bot later (auto-detects strategy + provider from existing setup)
+curl -fsSL https://raw.githubusercontent.com/Demonbane18/hermes-agent-setup/main/bootstrap.sh \
+    | bash -s -- --add --parent ~/gateways --names <new-name>
+
+# Check the bootstrap script version (useful when curl-piping after updates)
+curl -fsSL https://raw.githubusercontent.com/Demonbane18/hermes-agent-setup/main/bootstrap.sh \
+    | bash -s -- --version
+```
+
+[**Full setup walkthrough →**](#part-3-multi-gateway-setup--flexible-n-gateway-pattern) ·
+[**LLM Provider Reference →**](#314-llm-provider-reference) ·
+[**Sharing Strategies →**](#310-sharing-strategies--reference-deep-dive) ·
+[**Troubleshooting →**](#troubleshooting)
 
 ---
 
@@ -26,7 +81,8 @@
 
 ## Table of Contents
 
-- [Quickstart (TL;DR)](#quickstart-tldr)
+- [Quick Install](#quick-install)
+- [Getting Started](#getting-started)
 - [Why this guide exists](#why-this-guide-exists)
 - [What is Hermes Agent?](#what-is-hermes-agent)
 - [Hermes Agent vs. OpenClaw — why this guide picked Hermes](#hermes-agent-vs-openclaw--why-this-guide-picked-hermes)
@@ -63,41 +119,6 @@
 - [Real-Life Examples](#real-life-examples)
 - [Troubleshooting](#troubleshooting)
 - [Resources](#resources)
-
----
-
-## Quickstart (TL;DR)
-
-For people who already know the shape of all this. Beginners — skip this and start at [Part 1](#part-1-spin-up-the-vps-with-hostingers-one-click-install).
-
-```bash
-# 1. Click Deploy on https://www.hostinger.com/ph/vps/docker/hermes-agent (KVM 2)
-# 2. SSH into the host VM
-ssh root@<vps-ip>
-
-# 3. Drop into the Hermes container (skip if bare-metal)
-docker exec -it hermes-agent bash
-
-# 4. One-command bootstrap — prompts for parent, names, count, strategy
-curl -fsSL https://raw.githubusercontent.com/Demonbane18/hermes-agent-setup/main/bootstrap.sh | bash
-
-# Or non-interactive (3 isolated gateways):
-curl -fsSL .../bootstrap.sh | bash -s -- \
-    --parent ~/gateways --count 3 --names work,personal,coach \
-    --strategy isolated --non-interactive
-
-# 5. Edit each gateway's .env with its real BotFather token + API keys
-$EDITOR ~/gateways/work/.env
-$EDITOR ~/gateways/personal/.env
-# ...
-
-# 6. Launch every discovered gateway
-cd ~/gateways && ./run.sh all
-```
-
-N bots. Three sharing strategies (`isolated` default, `shared-skills`, `shared-both`). Persistent Docker volume keeps it safe across restarts. Done.
-
-> **Strategies in one line:** `isolated` = each bot has its own memories + skills. `shared-skills` = own memories, shared skill library. `shared-both` = one shared brain, N voices ([§3.10](#310-sharing-strategies--reference-deep-dive)).
 
 ---
 
