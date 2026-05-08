@@ -226,19 +226,46 @@ validate_name() {
     return 0
 }
 
+# When the script is piped (`curl ... | bash`), stdin is the script source —
+# any plain `read` returns empty string. Read from /dev/tty instead so prompts
+# still work. If /dev/tty isn't available (some CI), fall back to the script's
+# own stdin and warn the user up-front.
+TTY_FD=""
+init_tty() {
+    if [ -t 0 ]; then
+        TTY_FD="0"               # stdin is already a tty
+    elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        TTY_FD="tty"             # use /dev/tty directly
+    else
+        TTY_FD=""                # no interactive input possible
+    fi
+}
+
+read_tty() {
+    # Args: <prompt-msg>; sets REPLY
+    local msg="$1"
+    if [ "$TTY_FD" = "0" ]; then
+        read -r -p "$msg" REPLY
+    elif [ "$TTY_FD" = "tty" ]; then
+        read -r -p "$msg" REPLY </dev/tty
+    else
+        die "no interactive terminal available (stdin is piped, /dev/tty unreachable). Re-run with --non-interactive plus --parent/--count/--names/--strategy, or download the script first: curl -fsSL .../bootstrap.sh -o bootstrap.sh && bash bootstrap.sh"
+    fi
+}
+
 prompt() {
     local msg="$1" default="${2:-}"
     if [ "$NON_INTERACTIVE" = 1 ]; then
         die "missing required value: $msg (running --non-interactive)"
     fi
-    local reply
+    local label
     if [ -n "$default" ]; then
-        read -r -p "$msg [$default]: " reply
-        echo "${reply:-$default}"
+        label="$msg [$default]: "
     else
-        read -r -p "$msg: " reply
-        echo "$reply"
+        label="$msg: "
     fi
+    read_tty "$label"
+    echo "${REPLY:-$default}"
 }
 
 confirm() {
@@ -247,9 +274,8 @@ confirm() {
         echo "$default"
         return
     fi
-    local reply
-    read -r -p "$msg [$default]: " reply
-    echo "${reply:-$default}"
+    read_tty "$msg [$default]: "
+    echo "${REPLY:-$default}"
 }
 
 # -----------------------------------------------------------------------------
@@ -1163,6 +1189,14 @@ done
 # -----------------------------------------------------------------------------
 # Mode dispatch
 # -----------------------------------------------------------------------------
+# Set up interactive input source. Important for `curl ... | bash` runs where
+# stdin is the script source — prompts must read from /dev/tty instead.
+init_tty
+if [ "$NON_INTERACTIVE" = 0 ] && [ -z "$TTY_FD" ]; then
+    log "no terminal available — switching to non-interactive mode (will fail loudly on missing required values)"
+    NON_INTERACTIVE=1
+fi
+
 if [ "$MODE" = "add" ]; then
     [ -n "$PARENT" ] || die "--add requires --parent"
     PARENT="$(realpath -m "$PARENT")"
