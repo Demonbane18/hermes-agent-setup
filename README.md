@@ -1,9 +1,9 @@
 <div align="center">
 
-# Hermes Agent — Dual Telegram Bot Setup with a Shared Brain
+# Hermes Agent — Multi-Bot Telegram Setup on a VPS
 
-**Run two or multiple Telegram bots on a VPS that share the same memory, the same skills, and the same Obsidian vault — but speak with different voices.**
-**One for work. One for personal life. One brain.**
+**Run 1, 2, or N AI bots on Telegram from a single VPS.**
+**Your choice of model. Your choice of sharing. One `curl | bash` to ship.**
 
 [![Hermes Agent](https://img.shields.io/badge/built_on-Hermes_Agent-7c3aed)](https://github.com/NousResearch/hermes-agent)
 [![Hostinger](https://img.shields.io/badge/host-Hostinger_VPS-673de6)](https://www.hostinger.com/ph/vps/docker/hermes-agent)
@@ -18,7 +18,7 @@
 
 > **Who this is for:** complete beginners. If you've never SSH'd into a server, never deployed a bot, never edited a YAML file — you're in the right place. Every command has a one-line plain-English explanation. Estimated time: **1–2 hours**, half a Saturday.
 >
-> **What you'll have at the end:** two Telegram bots that text you back, share everything they learn, write their own skills over time, and quietly keep themselves in sync with your laptop's coding sessions.
+> **What you'll have at the end:** any number of Telegram bots that text you back, write their own skills over time, run on your choice of LLM provider (Xiaomi MiMo, Anthropic, OpenAI, OpenRouter, Gemini, Groq, DeepSeek, Ollama, or anything OpenAI-compatible), and quietly keep themselves in sync with your laptop's coding sessions. Each bot's brain is yours to isolate or share.
 >
 > If this saves you a Saturday, **star** the repo so the next person can find it.
 
