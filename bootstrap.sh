@@ -26,7 +26,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Bump on every meaningful change so users running `curl ... | bash` can see
 # whether their copy matches the latest.
-BOOTSTRAP_VERSION="0.6.1"
+BOOTSTRAP_VERSION="0.7.0"
 BOOTSTRAP_RELEASED="2026-05-08"
 
 # -----------------------------------------------------------------------------
@@ -439,7 +439,7 @@ arrow_pick() {
         fi
         local lines=0 i
         printf '%s\n' "$title" >&2; lines=$((lines+1))
-        printf '  ↑/↓ move · Enter to select · q to cancel    [%d/%d]\n' "$((idx+1))" "$n" >&2
+        printf '  ↑/↓ move · ← back · Enter select · q cancel    [%d/%d]\n' "$((idx+1))" "$n" >&2
         lines=$((lines+1))
         for ((i=top; i<top+viewport && i<n; i++)); do
             if [ "$i" = "$idx" ]; then
@@ -490,6 +490,8 @@ arrow_pick() {
                         idx=0; top=0 ;;
                     '[F'|'OF')  # End
                         idx=$((n-1)); _scroll_to_visible ;;
+                    '[D'|'OD')  # Left arrow — back / previous step
+                        trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2; return 2 ;;
                     '')          # bare Esc — cancel
                         trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2; return 1 ;;
                 esac ;;
@@ -507,6 +509,8 @@ arrow_pick() {
                 idx=$(( (idx - 1 + n) % n )); _scroll_to_visible ;;
             'j')                  # vim: down
                 idx=$(( (idx + 1) % n )); _scroll_to_visible ;;
+            'h')                  # vim: left = back
+                trap - EXIT INT TERM; _arrow_restore; printf '\n' >&2; return 2 ;;
             'g')                  # vim: home
                 idx=0; top=0 ;;
             'G')                  # vim: end
@@ -569,22 +573,24 @@ pick_model_for() {
     # ─── Arrow-key picker (preferred) ─────────────────────────────────────────
     if has_arrow_capability; then
         local picked
-        if picked="$(arrow_pick "Select model for $p (current: ${current:-<unset>})" "${opts[@]}")"; then
+        picked="$(arrow_pick "Select model for $p (current: ${current:-<unset>})" "${opts[@]}")"
+        local arc=$?
+        if [ "$arc" = 2 ]; then
+            return 2          # propagate "back" up to the orchestrator
+        fi
+        if [ "$arc" = 0 ]; then
             case "$picked" in
                 "$CUSTOM_LABEL")
                     local nm; nm="$(prompt "Type model id" "$fallback_default")"
-                    echo "$nm"
-                    return ;;
+                    echo "$nm"; return ;;
                 "$SKIP_LABEL")
-                    echo "$current"
-                    return ;;
+                    echo "$current"; return ;;
                 *)
                     # Strip "  (current)" / "  (default)" suffix back to bare model id
-                    echo "${picked%%  (*}"
-                    return ;;
+                    echo "${picked%%  (*}"; return ;;
             esac
         fi
-        # User pressed q/Esc — keep the current value (or default if unset)
+        # arc=1 → q/Esc cancel — keep the current value (or default if unset)
         echo "$fallback_default"
         return
     fi
@@ -655,7 +661,29 @@ prompt_provider() {
         if [ "$NON_INTERACTIVE" = 1 ]; then
             PROVIDER="xiaomi-mimo"
         else
-            cat <<'EOF'
+            local P_MIMO="xiaomi-mimo  — Token Plan / Orbit, free tokens via Orbit program  (default)"
+            local P_OR="openrouter   — multi-model gateway  (sk-or-v1-...)"
+            local P_ANT="anthropic    — Claude API"
+            local P_OAI="openai       — OpenAI API"
+            local P_GEM="gemini       — Google Gemini"
+            local P_GRQ="groq         — fast Llama / Mixtral"
+            local P_DS="deepseek     — DeepSeek chat & reasoner"
+            local P_MM="minimax      — MiniMax"
+            local P_ZAI="zai          — Z.AI / GLM"
+            local P_OLL="ollama       — local Ollama, no API key"
+            local P_CUS="custom       — you supply name + base_url + key_env"
+            local picked=""
+            if has_arrow_capability; then
+                picked="$(arrow_pick "Default LLM provider" \
+                    "$P_MIMO" "$P_OR" "$P_ANT" "$P_OAI" "$P_GEM" \
+                    "$P_GRQ" "$P_DS" "$P_MM" "$P_ZAI" "$P_OLL" "$P_CUS")"
+                local arc=$?
+                [ "$arc" = 2 ] && return 2
+                [ "$arc" = 0 ] || picked=""
+            fi
+            if [ -z "$picked" ]; then
+                {
+                    cat <<'EOF'
 
 Default LLM provider for these gateways:
 
@@ -672,21 +700,37 @@ Default LLM provider for these gateways:
   11) custom                 (you supply name + base_url + key_env)
 
 EOF
-            local sel; sel="$(prompt "Pick 1-11" "1")"
-            case "$sel" in
-                1|xiaomi-mimo) PROVIDER="xiaomi-mimo" ;;
-                2|openrouter)  PROVIDER="openrouter" ;;
-                3|anthropic)   PROVIDER="anthropic" ;;
-                4|openai)      PROVIDER="openai" ;;
-                5|gemini)      PROVIDER="gemini" ;;
-                6|groq)        PROVIDER="groq" ;;
-                7|deepseek)    PROVIDER="deepseek" ;;
-                8|minimax)     PROVIDER="minimax" ;;
-                9|zai)         PROVIDER="zai" ;;
-                10|ollama)     PROVIDER="ollama" ;;
-                11|custom)     PROVIDER="custom" ;;
-                *) die "invalid pick: $sel" ;;
-            esac
+                } >&2
+                local sel; sel="$(prompt "Pick 1-11" "1")"
+                case "$sel" in
+                    1|xiaomi-mimo) PROVIDER="xiaomi-mimo" ;;
+                    2|openrouter)  PROVIDER="openrouter" ;;
+                    3|anthropic)   PROVIDER="anthropic" ;;
+                    4|openai)      PROVIDER="openai" ;;
+                    5|gemini)      PROVIDER="gemini" ;;
+                    6|groq)        PROVIDER="groq" ;;
+                    7|deepseek)    PROVIDER="deepseek" ;;
+                    8|minimax)     PROVIDER="minimax" ;;
+                    9|zai)         PROVIDER="zai" ;;
+                    10|ollama)     PROVIDER="ollama" ;;
+                    11|custom)     PROVIDER="custom" ;;
+                    *) die "invalid pick: $sel" ;;
+                esac
+            else
+                case "$picked" in
+                    "$P_MIMO") PROVIDER="xiaomi-mimo" ;;
+                    "$P_OR")   PROVIDER="openrouter" ;;
+                    "$P_ANT")  PROVIDER="anthropic" ;;
+                    "$P_OAI")  PROVIDER="openai" ;;
+                    "$P_GEM")  PROVIDER="gemini" ;;
+                    "$P_GRQ")  PROVIDER="groq" ;;
+                    "$P_DS")   PROVIDER="deepseek" ;;
+                    "$P_MM")   PROVIDER="minimax" ;;
+                    "$P_ZAI")  PROVIDER="zai" ;;
+                    "$P_OLL")  PROVIDER="ollama" ;;
+                    "$P_CUS")  PROVIDER="custom" ;;
+                esac
+            fi
         fi
     fi
 
@@ -716,6 +760,8 @@ EOF
         # Model
         if [ -z "$MODEL" ]; then
             MODEL="$(pick_model_for "$PROVIDER" "")"
+            local mrc=$?
+            [ "$mrc" = 2 ] && { PROVIDER=""; return 2; }
         fi
 
         # Base URL (skip for built-in providers — they don't need one)
@@ -761,6 +807,8 @@ EOF
     if [ "$FALLBACK_PROVIDER" != "none" ] && [ -n "$FALLBACK_PROVIDER" ]; then
         if [ -z "$FALLBACK_MODEL" ]; then
             FALLBACK_MODEL="$(pick_model_for "$FALLBACK_PROVIDER" "")"
+            local frc=$?
+            [ "$frc" = 2 ] && { FALLBACK_PROVIDER=""; return 2; }
         fi
     fi
 
@@ -1304,22 +1352,42 @@ collect_strategy() {
         if [ "$NON_INTERACTIVE" = 1 ]; then
             STRATEGY="isolated"
         else
-            local sel
-            cat <<'EOF'
+            local L_ISO="isolated       — each gateway has its own memories/ and skills/  (default)"
+            local L_SK="shared-skills  — own memories/, shared skills/  (one skill library, separate memory streams)"
+            local L_BOTH="shared-both    — both shared via _shared/  (one logical agent, N voices)"
+            local picked=""
+            if has_arrow_capability; then
+                picked="$(arrow_pick "Sharing strategy" "$L_ISO" "$L_SK" "$L_BOTH")"
+                local arc=$?
+                [ "$arc" = 2 ] && return 2
+                [ "$arc" = 0 ] || picked=""
+            fi
+            if [ -z "$picked" ]; then
+                # Numbered fallback
+                {
+                    cat <<'EOF'
 
 Sharing strategy:
-  1) isolated      Each gateway has its own memories/ and skills/. Default.
+  1) isolated      Each gateway has its own memories/ and skills/.  (default)
   2) shared-skills Own memories/, shared skills/.
-  3) shared-both   Both shared via _shared/ (one logical agent, N voices).
+  3) shared-both   Both shared via _shared/  (one logical agent, N voices).
 
 EOF
-            sel="$(prompt "Choose 1/2/3" "1")"
-            case "$sel" in
-                1|isolated)             STRATEGY="isolated" ;;
-                2|skills|shared-skills) STRATEGY="shared-skills" ;;
-                3|both|shared-both)     STRATEGY="shared-both" ;;
-                *) die "invalid choice: $sel" ;;
-            esac
+                } >&2
+                local sel; sel="$(prompt "Choose 1/2/3" "1")"
+                case "$sel" in
+                    1|isolated)             STRATEGY="isolated" ;;
+                    2|skills|shared-skills) STRATEGY="shared-skills" ;;
+                    3|both|shared-both)     STRATEGY="shared-both" ;;
+                    *) die "invalid choice: $sel" ;;
+                esac
+            else
+                case "$picked" in
+                    "$L_ISO")  STRATEGY="isolated" ;;
+                    "$L_SK")   STRATEGY="shared-skills" ;;
+                    "$L_BOTH") STRATEGY="shared-both" ;;
+                esac
+            fi
         fi
     fi
     STRATEGY="$(normalize_strategy "$STRATEGY")"
@@ -1385,10 +1453,37 @@ EOF
 mode_a_fresh() {
     log "Mode A — fresh setup"
 
-    collect_parent
-    collect_names
-    collect_strategy
-    prompt_provider
+    # Wizard state machine. Each step can return 2 (back) which steps the
+    # state pointer one position backward (and clears the destination's var
+    # so it re-prompts). State 1 (parent) has nothing to go back to — Left
+    # arrow there is a no-op.
+    #   1 = parent  ·  2 = names  ·  3 = strategy  ·  4 = provider stage
+    local state=1
+    while [ "$state" -le 4 ]; do
+        local rc=0
+        case "$state" in
+            1) collect_parent;   rc=$? ;;
+            2) collect_names;    rc=$? ;;
+            3) collect_strategy; rc=$? ;;
+            4) prompt_provider;  rc=$? ;;
+        esac
+        if [ "$rc" = 2 ]; then
+            if [ "$state" -le 1 ]; then
+                # Already at the first step — re-prompt this state
+                PARENT=""
+                continue
+            fi
+            state=$((state - 1))
+            # Clear the destination state's var(s) so it re-prompts cleanly
+            case "$state" in
+                1) PARENT="" ;;
+                2) NAMES_RAW=""; COUNT="" ;;
+                3) STRATEGY="" ;;
+            esac
+        else
+            state=$((state + 1))
+        fi
+    done
 
     while true; do
         echo
@@ -1533,8 +1628,28 @@ mode_b_add() {
         warn "found old layout: $parent/shared/ — consider 'mv $parent/shared $parent/_shared' (not done automatically)"
     fi
 
-    collect_names_for_add "$parent"
-    prompt_provider
+    # Mini wizard: 1=names, 2=provider stage. Strategy already locked in
+    # above (auto-detected or user-prompted), so it isn't re-asked here.
+    local state=1
+    while [ "$state" -le 2 ]; do
+        local rc=0
+        case "$state" in
+            1) collect_names_for_add "$parent"; rc=$? ;;
+            2) prompt_provider;                 rc=$? ;;
+        esac
+        if [ "$rc" = 2 ]; then
+            if [ "$state" -le 1 ]; then
+                NAMES_RAW=""; COUNT=""
+                continue
+            fi
+            state=$((state - 1))
+            case "$state" in
+                1) NAMES_RAW=""; COUNT="" ;;
+            esac
+        else
+            state=$((state + 1))
+        fi
+    done
 
     while true; do
         echo
