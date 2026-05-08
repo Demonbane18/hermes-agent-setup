@@ -26,7 +26,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Bump on every meaningful change so users running `curl ... | bash` can see
 # whether their copy matches the latest.
-BOOTSTRAP_VERSION="0.6.0"
+BOOTSTRAP_VERSION="0.6.1"
 BOOTSTRAP_RELEASED="2026-05-08"
 
 # -----------------------------------------------------------------------------
@@ -1261,6 +1261,17 @@ collect_parent() {
     PARENT="$(realpath -m "$PARENT")"
 }
 
+default_name_for_index() {
+    # Conventional defaults for the first two gateways match the README's
+    # worked example (gateways/work + gateways/personal). Beyond that, fall
+    # back to gateway-N so the picker doesn't propose collisions.
+    case "$1" in
+        1) echo "work" ;;
+        2) echo "personal" ;;
+        *) echo "gateway-$1" ;;
+    esac
+}
+
 collect_names() {
     if [ -z "$NAMES_RAW" ]; then
         local n
@@ -1272,8 +1283,12 @@ collect_names() {
         [[ "$n" =~ ^[0-9]+$ ]] || die "count must be a positive integer"
         local i nm default names_raw=""
         for ((i=1; i<=n; i++)); do
-            default="gateway-$i"
-            nm="$(prompt "Name for gateway $i" "$default")"
+            default="$(default_name_for_index "$i")"
+            if [ "$NON_INTERACTIVE" = 1 ]; then
+                nm="$default"
+            else
+                nm="$(prompt "Name for gateway $i" "$default")"
+            fi
             names_raw+="${names_raw:+,}$nm"
         done
         NAMES_RAW="$names_raw"
