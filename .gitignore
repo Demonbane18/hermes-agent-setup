@@ -38,6 +38,12 @@ gateways/_shared/sessions/
 __pycache__/
 *.pyc
 
+# --- Local-only prompt-context drop (images / screenshots / scratch files)
+# Folder is committed via README so it exists on fresh clones; everything
+# inside it stays local.
+prompt-context/*
+!prompt-context/README.md
+
 # --- Diagram tooling ----------------------------------------------------------
 diagrams/node_modules/
 diagrams/package-lock.json
