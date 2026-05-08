@@ -26,7 +26,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Bump on every meaningful change so users running `curl ... | bash` can see
 # whether their copy matches the latest.
-BOOTSTRAP_VERSION="0.7.1"
+BOOTSTRAP_VERSION="0.7.2"
 BOOTSTRAP_RELEASED="2026-05-08"
 
 # -----------------------------------------------------------------------------
@@ -1685,33 +1685,64 @@ mode_b_add() {
 # -----------------------------------------------------------------------------
 # Final banner
 # -----------------------------------------------------------------------------
+detect_editor() {
+    if [ -n "${VISUAL:-}" ]; then
+        echo "$VISUAL"; return
+    fi
+    if [ -n "${EDITOR:-}" ]; then
+        echo "$EDITOR"; return
+    fi
+    local e
+    for e in nano vim vi; do
+        command -v "$e" >/dev/null 2>&1 && { echo "$e"; return; }
+    done
+    # Last-resort fallback — almost certainly installed on a Linux VPS
+    echo "nano"
+}
+
 print_next_steps() {
     local parent="$1"; shift
     local names=("$@")
+    local editor; editor="$(detect_editor)"
     cat <<EOF
 
 ================================================================
 Next steps
 ================================================================
-1. Edit each gateway's .env (paste your real Telegram bot token,
-   API keys, allowed users, vault path):
+1. Edit each gateway's .env file (paste your real Telegram bot token,
+   API keys, allowed users, vault path).
+
+   Note: .env is a HIDDEN file (leading dot). \`ls\` won't show it —
+   use \`ls -la\` to see hidden files inside a gateway folder.
+
+   Open one of these with your preferred editor:
 EOF
     local nm
     for nm in "${names[@]}"; do
-        echo "     \$EDITOR $parent/$nm/.env"
+        echo "     $editor $parent/$nm/.env"
     done
     cat <<EOF
+
+   To view (read-only) without opening an editor:
+     cat $parent/${names[0]}/.env
+
 2. (Optional) Run \`hermes setup\` per gateway to seed memories/
    and skills/ if you haven't yet:
      for gw in ${names[*]}; do (cd $parent/\$gw && hermes setup); done
+
 3. Launch every discovered gateway:
      cd $parent && ./run.sh all
+
 4. List / status / stop:
      ./run.sh list
      ./run.sh status
      ./run.sh stop          # stop all
-     ./run.sh stop $nm      # stop one
+     ./run.sh stop ${names[0]}      # stop one
 ================================================================
+
+Tip: if the \`$editor\` command above isn't your preferred editor, use
+nano, vim, micro, or whatever you have installed instead — the path is
+the only thing that matters.
 EOF
 }
 

@@ -38,9 +38,12 @@ After installation:
 
 ```bash
 cd ~/gateways                          # or whichever parent you chose
-$EDITOR <gateway>/.env                 # paste your BotFather token + API keys
+ls -la <gateway>/                      # list files (.env is hidden — needs -a)
+nano <gateway>/.env                    # or vim, micro, $EDITOR — paste BotFather token + API keys
 ./run.sh all                           # start every discovered gateway
 ```
+
+> _Why `nano` and not `$EDITOR`?_ Many fresh VPS shells don't have `$EDITOR` set, so a literal `$EDITOR /path/.env` expands to nothing and `bash` tries to execute the `.env` file (which fails with `Permission denied` because we `chmod 600` it). Use a concrete editor name. The bootstrap script auto-detects one for its next-steps banner.
 
 ## Getting Started
 
@@ -808,7 +811,7 @@ This repo ships [`templates/.env.template`](./templates/.env.template) and a wor
 for gw in "${GATEWAYS[@]}"; do
   cp templates/.env.template "$PARENT/$gw/.env"
   chmod 600 "$PARENT/$gw/.env"
-  $EDITOR "$PARENT/$gw/.env"
+  nano "$PARENT/$gw/.env"          # or vim / micro / $EDITOR
 done
 ```
 
