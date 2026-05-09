@@ -46,6 +46,7 @@ prompt-context/*
 
 # --- Project Claude Code instructions (kept local, not pushed)
 CLAUDE.md
+AGENTS.md
 
 # --- Diagram tooling ----------------------------------------------------------
 diagrams/node_modules/
