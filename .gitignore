@@ -54,6 +54,15 @@ diagrams/package-lock.json
 
 # --- Personal drafts (social posts, scratch notes) — never push -------------
 social/
+social/guide-video/node_modules/
+social/guide-video/package-lock.json
+social/guide-video/.cache/
+social/guide-video/out/
+social/guide-video/stills/
+social/guide-video/public/
+social/guide-video/src/
+social/guide-video/package.json
+social/guide-video/tsconfig.json
 demo-script-fb.md
 
 # --- OS / editor / agent noise -----------------------------------------------

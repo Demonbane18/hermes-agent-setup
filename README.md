@@ -141,6 +141,8 @@ This repo is the exact setup, written for beginners, that gives you:
 
 I've been running this for over a month. Migrated to Xiaomi MiMo for primary inference. Below is the **exact** setup, copy-pasteable.
 
+![Multiple Hermes agents on a VPS overview](./images/guide-video/guide-overview.gif)
+
 ---
 
 ## What is Hermes Agent?
@@ -202,6 +204,8 @@ Straight from [hermes-agent.nousresearch.com](https://hermes-agent.nousresearch.
 ## Profiles vs. Multi-Gateway — four ways to share (or not)
 
 There are **four patterns** for running multiple Hermes bots. The first one is upstream's profile system; the other three are the multi-gateway sharing strategies this guide ships in `bootstrap.sh`. Pick the row that matches your situation:
+
+![Profiles isolate everything; multi-gateway lets you choose what shares](./images/guide-video/profiles-vs-gateways.gif)
 
 |                      | **Profiles** (official upstream)     | **Multi-Gateway: `isolated`** (default)         | **Multi-Gateway: `shared-skills`**                     | **Multi-Gateway: `shared-both`**       |
 | -------------------- | ------------------------------------ | ----------------------------------------------- | ------------------------------------------------------ | -------------------------------------- |
@@ -281,6 +285,8 @@ You also need:
 Before you start clicking and copy-pasting, here are four ideas this guide leans on hard. Skim the diagrams once. If something later feels confusing, scroll back here.
 
 > **You don't need to understand all of this to follow the steps.** The commands work as written. This section is here for the moment you ask _"wait, what is this actually doing?"_ — usually around Part 3.
+
+![One Hostinger VPS can run many Hermes Telegram gateways](./images/guide-video/multi-gateway-architecture.gif)
 
 ### What's a symlink? (and what exactly are we symlinking?)
 
@@ -682,6 +688,8 @@ For the rest of this Part the worked example is **`~/gateways/work` + `~/gateway
 
 The shape depends on the strategy you picked.
 
+![Each gateway gets its own working folder](./images/guide-video/gateway-folders.gif)
+
 **Strategy: `isolated` (default)**
 
 ```
@@ -1003,6 +1011,8 @@ WantedBy=multi-user.target
 
 Everything in §3.1–3.8 in one command:
 
+![The bootstrap script turns setup into guided choices](./images/guide-video/bootstrap-security.gif)
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Demonbane18/hermes-agent-setup/main/bootstrap.sh | bash
 ```
@@ -1080,6 +1090,8 @@ Full flag list and the per-provider defaults: `./bootstrap.sh --help` or [§3.14
 ### 3.10 Sharing strategies — reference deep-dive
 
 The three strategies in this guide differ in **what the bots share** and **how cross-pollination happens**. Pick by use case, not by feel.
+
+![Shared brain, separate identities, and symlinked memory or skills](./images/guide-video/shared-brain-symlinks.gif)
 
 **`isolated`** — each gateway's `memories/` and `skills/` are real, separate folders. **Default.** Use when:
 
