@@ -1,6 +1,6 @@
 <div align="center">
 
-# Hermes Agent — Multi-Bot Telegram Setup on a VPS
+# Multiple Hermes Agents on a VPS
 
 **Run 1, 2, or N AI bots on Telegram from a single VPS.**
 **Your choice of model. Your choice of sharing. One `curl | bash` to ship.**
