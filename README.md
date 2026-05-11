@@ -118,6 +118,11 @@ curl -fsSL https://raw.githubusercontent.com/Demonbane18/hermes-agent-setup/main
   - [6.0 What is an Obsidian vault, in plain English?](#60-what-is-an-obsidian-vault-in-plain-english)
   - [6.4 Level it up: Karpathy's LLM Wiki pattern](#64-level-it-up-karpathys-llm-wiki-pattern)
 - [Part 7: hermes-context — Sync with Claude Code on your laptop](#part-7-hermes-context--sync-with-claude-code-on-your-laptop)
+- [Part 8: Connect Hermes Desktop](#part-8-connect-hermes-desktop)
+  - [8.1 What Hermes Desktop is actually connecting to](#81-what-hermes-desktop-is-actually-connecting-to)
+  - [8.2 Root VPS multi-gateway setup: pick one gateway](#82-root-vps-multi-gateway-setup-pick-one-gateway)
+  - [8.3 Hostinger one-click Docker setup: connect to the container gateway](#83-hostinger-one-click-docker-setup-connect-to-the-container-gateway)
+  - [8.4 Switching between work and personal](#84-switching-between-work-and-personal)
 - [Architecture Diagrams](#architecture-diagrams)
 - [Real-Life Examples](#real-life-examples)
 - [Troubleshooting](#troubleshooting)
@@ -1930,6 +1935,326 @@ Now: you finish a coding session on your laptop → Claude pushes the summary �
 
 ---
 
+## Part 8: Connect Hermes Desktop
+
+[Hermes Desktop](https://github.com/fathah/hermes-desktop) can act as a desktop frontend for a Hermes Agent that is already running somewhere else. That "somewhere else" can be:
+
+1. The **root VPS multi-gateway setup** from this guide (`~/gateways/work`, `~/gateways/personal`, etc.).
+2. A **Hostinger one-click Docker project** with the stock Hermes container and its persistent `/opt/data` home.
+
+The two setups feel similar once connected, but the wiring is different enough to deserve its own section.
+
+### 8.1 What Hermes Desktop is actually connecting to
+
+Hermes Desktop remote mode talks to the Hermes **API server**. It does not SSH into the machine, it does not read your gateway folders directly, and it does not update `config.yaml` on the VPS for you.
+
+The three rules that prevent most confusion:
+
+| Thing in Desktop | What it means |
+|---|---|
+| **Remote URL** | The URL of a running Hermes API server, such as `http://127.0.0.1:8642`. |
+| **API Key** | The Hermes API server key: `API_SERVER_KEY`. Do not type `Bearer`; Desktop adds that header itself. |
+| **Models / Providers pages** | Mostly local Desktop model-library settings. In remote mode, use the model advertised by the remote `/v1/models` endpoint, such as `hermes-work` or `hermes-esvo`. |
+
+> _What this does:_ Think of Desktop as a nicer screen and keyboard for one remote Hermes gateway at a time. Your real LLM keys still live on the VPS/container in `.env`; your real model choice still lives in the remote Hermes `config.yaml`.
+
+The mental model:
+
+```mermaid
+flowchart TB
+    subgraph PC["Your PC"]
+        D["Hermes Desktop"]
+        L["localhost URL\nhttp://127.0.0.1:8642"]
+    end
+
+    subgraph VPS["Hostinger VPS"]
+        S["SSH tunnel"]
+        R["Root VPS gateway\n~/gateways/work"]
+        H["Hostinger Docker container\n/opt/data"]
+    end
+
+    D --> L --> S
+    S --> R
+    S --> H
+```
+
+Health checks are not enough. `/health` can succeed even when the API key or model path is wrong. Always test these two endpoints:
+
+```bash
+curl -i http://127.0.0.1:8642/v1/models \
+  -H "Authorization: Bearer hermesdesktop"
+```
+
+```bash
+curl -i http://127.0.0.1:8642/v1/chat/completions \
+  -H "Authorization: Bearer hermesdesktop" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"hermes-work","messages":[{"role":"user","content":"Reply OK only"}],"stream":false}'
+```
+
+> _What this does:_ The first command proves your Desktop key can reach the API server. The second proves the remote Hermes gateway can actually call its configured model provider.
+
+On Windows PowerShell, JSON quoting in `curl.exe` is easy to mangle. Use this version instead:
+
+```powershell
+$headers = @{
+  Authorization = "Bearer hermesdesktop"
+  "Content-Type" = "application/json"
+}
+
+$body = @{
+  model = "hermes-work"
+  stream = $false
+  messages = @(
+    @{
+      role = "user"
+      content = "Reply OK only"
+    }
+  )
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod "http://127.0.0.1:8642/v1/chat/completions" -Method Post -Headers $headers -Body $body
+```
+
+### 8.2 Root VPS multi-gateway setup: pick one gateway
+
+This is the setup from [Part 3](#part-3-multi-gateway-setup--flexible-n-gateway-pattern), where `run.sh` starts multiple Telegram gateways from the VPS filesystem.
+
+Desktop can connect to **one gateway URL at a time**. Pick the voice you want first:
+
+```text
+work      -> API port 8642 -> model name hermes-work
+personal  -> API port 8643 -> model name hermes-personal
+```
+
+Edit the gateway's `.env`.
+
+Example: `~/gateways/work/.env`
+
+```bash
+API_SERVER_ENABLED=true
+API_SERVER_HOST=127.0.0.1
+API_SERVER_PORT=8642
+API_SERVER_KEY=hermesdesktop
+API_SERVER_MODEL_NAME=hermes-work
+```
+
+Example: `~/gateways/personal/.env`
+
+```bash
+API_SERVER_ENABLED=true
+API_SERVER_HOST=127.0.0.1
+API_SERVER_PORT=8643
+API_SERVER_KEY=hermesdesktop
+API_SERVER_MODEL_NAME=hermes-personal
+```
+
+> _What this does:_ Each gateway gets its own private API server on its own port. `127.0.0.1` keeps the API server private on the VPS; SSH carries it safely to your laptop.
+
+Restart:
+
+```bash
+cd ~/gateways
+./run.sh stop
+./run.sh all
+```
+
+From your PC, open an SSH tunnel for the gateway you want:
+
+```powershell
+ssh -L 8642:127.0.0.1:8642 root@YOUR_VPS_IP
+```
+
+If your PC already has something using local port `8642`, use a different local port:
+
+```powershell
+ssh -L 8644:127.0.0.1:8642 root@YOUR_VPS_IP
+```
+
+> _What this does:_ The left port is on your PC. The right port is on the VPS. So `8644:127.0.0.1:8642` means "open `http://127.0.0.1:8644` on my PC and forward it to the VPS gateway listening on `8642`."
+
+Test from your PC:
+
+```powershell
+curl.exe -i http://127.0.0.1:8642/v1/models -H "Authorization: Bearer hermesdesktop"
+```
+
+Expected:
+
+```json
+{"object":"list","data":[{"id":"hermes-work","object":"model"}]}
+```
+
+Hermes Desktop settings:
+
+```text
+Mode: Remote
+Remote URL: http://127.0.0.1:8642
+API Key: hermesdesktop
+Model: hermes-work
+```
+
+Do not paste your Xiaomi MiMo or OpenRouter key into the Desktop connection screen. That field is only for `API_SERVER_KEY`. MiMo/OpenRouter keys stay in the remote gateway's `.env`.
+
+### 8.3 Hostinger one-click Docker setup: connect to the container gateway
+
+The Hostinger one-click deploy is different: the stock Hermes app lives inside a Docker container, usually with persistent data at `/opt/data`. The browser URL Hostinger gives you often opens a `ttyd` web terminal or the Hermes TUI, **not** the OpenAI-compatible Hermes API.
+
+If this command from your PC returns `Server: ttyd` or `WWW-Authenticate: Basic realm="ttyd"`, you are hitting the terminal, not Hermes API:
+
+```powershell
+curl.exe -k -i https://hermes-agent-xxxx.srvxxxxx.hstgr.cloud/v1/models `
+  -H "Authorization: Bearer hermesdesktop"
+```
+
+Inside the Hostinger web terminal, check the persistent Hermes home:
+
+```bash
+cd /opt/data
+ls -la
+```
+
+If the terminal has no `nano` or `vi`, append the API server settings with `cat`:
+
+```bash
+cat >> /opt/data/.env <<'EOF'
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0
+API_SERVER_PORT=8642
+API_SERVER_KEY=hermesdesktop
+API_SERVER_MODEL_NAME=hermes-esvo
+EOF
+```
+
+> _Why `0.0.0.0` here?_ Inside Docker, `127.0.0.1` means "only inside this exact container." Binding to `0.0.0.0` lets Docker port mapping or the VPS host reach the API server. The API is still protected by `API_SERVER_KEY`; do not publish it without a key.
+
+Verify:
+
+```bash
+grep '^API_SERVER_' /opt/data/.env
+```
+
+Start the gateway. The official Docker image refuses to run the gateway as `root`, so prefer the container's normal Hostinger restart path. If you are in the web terminal and need a quick manual test, run:
+
+```bash
+cd /opt/data
+HERMES_ALLOW_ROOT_GATEWAY=1 hermes gateway
+```
+
+If the image has `runuser`, the cleaner manual form is:
+
+```bash
+cd /opt/data
+runuser -u hermes -- hermes gateway
+```
+
+If root-owned files later block the non-root gateway, fix ownership inside the container:
+
+```bash
+chown -R hermes:hermes /opt/data
+```
+
+Now test **inside the container**:
+
+```bash
+curl -i http://127.0.0.1:8642/v1/models \
+  -H "Authorization: Bearer hermesdesktop"
+```
+
+Expected:
+
+```json
+{"object":"list","data":[{"id":"hermes-esvo","object":"model"}]}
+```
+
+At this point the API works inside Docker. To reach it from Hermes Desktop, you still need a bridge from your PC to that container.
+
+#### Bridge option A: expose the Docker port
+
+In Hostinger Docker Manager or your Compose settings, map container port `8642` to a host port, for example:
+
+```text
+host 8642 -> container 8642
+```
+
+Then from your PC:
+
+```powershell
+ssh -L 8644:127.0.0.1:8642 root@YOUR_VPS_IP
+```
+
+Hermes Desktop:
+
+```text
+Mode: Remote
+Remote URL: http://127.0.0.1:8644
+API Key: hermesdesktop
+Model: hermes-esvo
+```
+
+#### Bridge option B: tunnel to the container IP
+
+If you cannot or do not want to publish a Docker host port, tunnel to the container's private Docker IP from the VPS host.
+
+On the **VPS host** shell, not inside the container:
+
+```bash
+docker ps
+docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' <container-name-or-id>
+```
+
+Suppose that prints `172.18.0.3`. From your PC:
+
+```powershell
+ssh -L 8644:172.18.0.3:8642 root@YOUR_VPS_IP
+```
+
+Hermes Desktop:
+
+```text
+Mode: Remote
+Remote URL: http://127.0.0.1:8644
+API Key: hermesdesktop
+Model: hermes-esvo
+```
+
+> _Caveat:_ Docker container IPs can change after recreation. A Hostinger/Docker port mapping is steadier for long-term use; the container-IP tunnel is a good diagnostic path.
+
+### 8.4 Switching between work and personal
+
+The VPS can run multiple API gateways at the same time. Hermes Desktop, as of this writing, uses **one active remote connection** at a time.
+
+For the root VPS multi-gateway setup, run both API servers:
+
+```text
+work      -> VPS 127.0.0.1:8642 -> Desktop http://127.0.0.1:8642
+personal  -> VPS 127.0.0.1:8643 -> Desktop http://127.0.0.1:8643
+```
+
+Tunnel both in one SSH session:
+
+```powershell
+ssh -L 8642:127.0.0.1:8642 -L 8643:127.0.0.1:8643 root@YOUR_VPS_IP
+```
+
+Then switch Desktop Settings:
+
+```text
+Work:     Remote URL http://127.0.0.1:8642, model hermes-work
+Personal: Remote URL http://127.0.0.1:8643, model hermes-personal
+```
+
+For separate Hostinger one-click Docker projects, treat each project/container as one gateway:
+
+```text
+hermes-agent-dru1 -> model hermes-dru1 -> one exposed/tunneled port
+hermes-agent-esvo -> model hermes-esvo -> another exposed/tunneled port
+```
+
+Telegram is still better for having two personas open at once. Desktop is best when you want a bigger screen for one chosen gateway.
+
+---
+
 ## Architecture Diagrams
 
 ### Multi-gateway with shared brain
@@ -2222,6 +2547,61 @@ Three things, in order:
 1. **Wrong endpoint.** Check your Xiaomi dashboard for **your** dedicated base URL — sgp / ams / cn are not interchangeable.
 2. **Whitespace in the key from copy-paste.** Verify with: `grep XIAOMI ~/gateways/work/.env | cat -A` — should end in `$`, not `^M$`.
 3. **Key was never created.** The dashboard's "Create API Key" button only appears once; clicking it generates a one-time-visible key. If you missed copying it, rotate and try again.
+</details>
+
+<details>
+<summary><strong>Hermes Desktop connects, but chat says "Invalid API key"</strong></summary>
+
+Do not trust the Desktop **Test Connection** button by itself. It checks `/health`, and `/health` can succeed even when the authenticated chat endpoint is misconfigured.
+
+Test the real API from your PC:
+
+```powershell
+curl.exe -i http://127.0.0.1:8642/v1/models -H "Authorization: Bearer hermesdesktop"
+```
+
+If that returns `200 OK`, test chat with PowerShell-native JSON:
+
+```powershell
+$headers = @{
+  Authorization = "Bearer hermesdesktop"
+  "Content-Type" = "application/json"
+}
+
+$body = @{
+  model = "hermes-work"
+  stream = $false
+  messages = @(@{ role = "user"; content = "Reply OK only" })
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod "http://127.0.0.1:8642/v1/chat/completions" -Method Post -Headers $headers -Body $body
+```
+
+What the result means:
+
+1. **`/v1/models` returns 401** - Desktop/API auth mismatch. The Desktop API Key field must be the raw `API_SERVER_KEY` value, with no `Bearer`.
+2. **`/v1/models` works but chat says invalid key** - Hermes reached the gateway, but the remote provider key is wrong or not loaded (`OPENROUTER_API_KEY`, `XIAOMI_API_KEY`, etc.).
+3. **PowerShell works but Desktop fails** - Desktop is likely selecting a stale local model card. In remote mode, choose the model advertised by `/v1/models` (`hermes-work`, `hermes-personal`, `hermes-esvo`), not a local Xiaomi/OpenRouter card.
+
+</details>
+
+<details>
+<summary><strong>Hostinger one-click public URL returns `ttyd` / Basic Auth</strong></summary>
+
+That URL is the Hostinger web terminal, not the Hermes API server. The giveaway:
+
+```text
+Server: ttyd/...
+WWW-Authenticate: Basic realm="ttyd"
+```
+
+Do not use that URL in Hermes Desktop. Use [Part 8](#part-8-connect-hermes-desktop):
+
+1. Enable `API_SERVER_*` inside `/opt/data/.env`.
+2. Start the gateway inside the container.
+3. Confirm `curl http://127.0.0.1:8642/v1/models` works inside the container.
+4. Expose the Docker port or tunnel to the container IP from the VPS host.
+
 </details>
 
 <details>
